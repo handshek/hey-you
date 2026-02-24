@@ -2,12 +2,8 @@
 name = "heyyou-agent"
 version = "0.1.0"
 description = "HeyYou Vision Agent — AI greeter for physical spaces"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 dependencies = [
-    "vision-agents",
+    "vision-agents[getstream,gemini,elevenlabs]",
     "python-dotenv",
 ]
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.backends"
