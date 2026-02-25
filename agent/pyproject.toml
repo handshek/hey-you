@@ -4,6 +4,6 @@ version = "0.1.0"
 description = "HeyYou Vision Agent — AI greeter for physical spaces"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    "vision-agents[getstream,gemini,elevenlabs]",
+    "vision-agents[elevenlabs,gemini,getstream,openrouter,ultralytics]",
     "python-dotenv",
 ]
