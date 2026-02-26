@@ -1,5 +1,6 @@
 "use client";
 
+import { motion } from "framer-motion";
 import { AvatarState } from "./Avatar";
 
 /**
@@ -32,15 +33,48 @@ export const MouthSquinting = () => (
   <path d="M255 495 Q339 512 423 495 L420 516 Q339 536 258 516Z" fill="white" />
 );
 
-export function Mouth({ state }: { state: AvatarState }) {
-  switch (state) {
-    case "sad":
-      return <MouthSad />;
-    case "wow":
-      return <MouthWow />;
-    case "squinting":
-      return <MouthSquinting />;
-    default:
-      return <MouthSmiley />;
-  }
+export function Mouth({
+  state,
+  isWowAnimating = false,
+}: {
+  state: AvatarState;
+  isWowAnimating?: boolean;
+}) {
+  const renderMouth = () => {
+    switch (state) {
+      case "sad":
+        return <MouthSad />;
+      case "wow":
+        return <MouthWow />;
+      case "squinting":
+        return <MouthSquinting />;
+      default:
+        return <MouthSmiley />;
+    }
+  };
+
+  return (
+    <motion.g
+      animate={
+        isWowAnimating
+          ? {
+              y: [0, 0, 40, 0, 0],
+              scale: [1, 1, 1.15, 1, 1],
+            }
+          : { y: 0, scale: 1 }
+      }
+      transition={
+        isWowAnimating
+          ? {
+              duration: 1.5,
+              times: [0, 0.35, 0.48, 0.61, 1],
+              ease: [0.45, 0.05, 0.55, 0.95],
+            }
+          : { duration: 0.15 }
+      }
+      style={{ transformOrigin: "339px 487px" }}
+    >
+      {renderMouth()}
+    </motion.g>
+  );
 }

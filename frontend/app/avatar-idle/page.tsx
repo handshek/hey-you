@@ -13,13 +13,13 @@ export default function AvatarIdlePage() {
   return (
     <div
       style={{ background: "#000000" }}
-      className="flex flex-col items-center justify-center min-h-screen w-full overflow-hidden"
+      className="relative flex items-center justify-center min-h-screen w-full overflow-hidden"
     >
-      <div className="relative">
+      <div className="flex items-center justify-center">
         <Avatar state={faceState} />
       </div>
 
-      <div className="mt-16 flex flex-col items-center gap-6">
+      <div className="absolute bottom-12 flex flex-col items-center gap-6">
         <button
           onClick={toggleState}
           className="px-8 py-3 rounded-full bg-white/5 border border-white/10 text-white/70 
