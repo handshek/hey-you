@@ -7,6 +7,7 @@ import {
   StreamCall,
   useCallStateHooks,
   User,
+  ParticipantView,
   type StreamVideoParticipant,
 } from "@stream-io/video-react-sdk";
 import { motion, AnimatePresence } from "framer-motion";
@@ -50,6 +51,11 @@ function GreeterYoloInner({
 }) {
   const { useRemoteParticipants } = useCallStateHooks();
   const remoteParticipants = useRemoteParticipants();
+
+  const agentParticipant = remoteParticipants.find(
+    (p: StreamVideoParticipant) =>
+      p.userId?.includes("heyyou") || p.userId?.includes("agent"),
+  );
 
   const [botState, setBotState] = useState<
     "waiting" | "looking" | "speaking" | "idle"
@@ -105,11 +111,6 @@ function GreeterYoloInner({
 
   // Detect agent state
   useEffect(() => {
-    const agentParticipant = remoteParticipants.find(
-      (p: StreamVideoParticipant) =>
-        p.userId?.includes("heyyou") || p.userId?.includes("agent"),
-    );
-
     if (agentParticipant) {
       if (agentParticipant.isSpeaking) {
         if (botState !== "speaking") {
@@ -130,7 +131,7 @@ function GreeterYoloInner({
         addLog("info", "Agent disconnected");
       }
     }
-  }, [remoteParticipants, botState, addLog]);
+  }, [agentParticipant, botState, addLog]);
 
   // Auto-scroll logs and compliments
   useEffect(() => {
@@ -141,10 +142,7 @@ function GreeterYoloInner({
     complimentEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [compliments]);
 
-  const hasAgent = remoteParticipants.some(
-    (p: StreamVideoParticipant) =>
-      p.userId?.includes("heyyou") || p.userId?.includes("agent"),
-  );
+  const hasAgent = Boolean(agentParticipant);
 
   const stateColor = {
     waiting: "bg-yellow-500/50",
@@ -180,7 +178,7 @@ function GreeterYoloInner({
         {/* Stock video display */}
         <div className="relative z-10 mb-6">
           <motion.div
-            className="relative w-80 h-56 rounded-2xl overflow-hidden border-2"
+            className="relative w-80 h-56 rounded-2xl overflow-hidden border-2 bg-black/50"
             animate={{
               borderColor:
                 botState === "speaking"
@@ -199,41 +197,23 @@ function GreeterYoloInner({
             }}
             transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
           >
-            <video
-              src="/stock/street_10.mp4"
-              autoPlay
-              loop
-              muted
-              playsInline
-              className="w-full h-full object-cover"
-            />
-
-            {/* YOLO scanning overlay */}
-            <AnimatePresence>
-              {botState === "looking" && (
-                <motion.div
-                  className="absolute inset-0 pointer-events-none"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                >
-                  <motion.div
-                    className="absolute left-0 right-0 h-0.5 bg-linear-to-r from-transparent via-blue-400/60 to-transparent"
-                    animate={{ top: ["0%", "100%", "0%"] }}
-                    transition={{
-                      duration: 3,
-                      repeat: Infinity,
-                      ease: "linear",
-                    }}
-                  />
-                  {/* Corner brackets */}
-                  <div className="absolute top-2 left-2 w-6 h-6 border-t-2 border-l-2 border-blue-400/50 rounded-tl-sm" />
-                  <div className="absolute top-2 right-2 w-6 h-6 border-t-2 border-r-2 border-blue-400/50 rounded-tr-sm" />
-                  <div className="absolute bottom-2 left-2 w-6 h-6 border-b-2 border-l-2 border-blue-400/50 rounded-bl-sm" />
-                  <div className="absolute bottom-2 right-2 w-6 h-6 border-b-2 border-r-2 border-blue-400/50 rounded-br-sm" />
-                </motion.div>
-              )}
-            </AnimatePresence>
+            {agentParticipant ? (
+              <ParticipantView
+                participant={agentParticipant}
+                trackType="videoTrack"
+                muteAudio
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <video
+                src="/stock/street_10.mp4"
+                autoPlay
+                loop
+                muted
+                playsInline
+                className="w-full h-full object-cover opacity-50 grayscale"
+              />
+            )}
 
             {/* Detection badge */}
             <div className="absolute top-3 right-3 flex items-center gap-1.5 bg-black/70 backdrop-blur-sm px-2.5 py-1 rounded-full">
