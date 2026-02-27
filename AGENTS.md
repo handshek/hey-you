@@ -123,6 +123,7 @@ The frontend and agent never communicate directly. Both join the same Stream vid
 - TypeScript (strict)
 - TailwindCSS v4
 - shadcn/ui (New York style, neutral base)
+- @hugeicons/react @hugeicons/core-free-icons (icons)
 - @stream-io/video-react-sdk (WebRTC video calls)
 - framer-motion (bot face animations)
 - bun (package manager, see bun.lock)
@@ -187,3 +188,4 @@ GOOGLE_API_KEY=
 ## Rules
 
 1. Always use Context7 MCP when I need library/API documentation, code generation, setup or configuration steps without me having to explicitly ask.
+2. Do not create custom icons. Unless the icon required is not available in hugeicons.
