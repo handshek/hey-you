@@ -7,10 +7,11 @@ import {
   StreamCall,
   useCallStateHooks,
   User,
-  ParticipantView,
   type StreamVideoParticipant,
 } from "@stream-io/video-react-sdk";
 import { motion, AnimatePresence } from "framer-motion";
+import { Avatar, type AvatarState } from "@/components/avatar/Avatar";
+import { GreeterDrawer } from "@/components/greeter-drawer";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -34,19 +35,63 @@ interface LogEntry {
 }
 
 /* ─────────────────────────────────────────────
+   Typewriter text animation
+   ───────────────────────────────────────────── */
+function TypewriterText({ text }: { text: string }) {
+  const [charIndex, setCharIndex] = useState(0);
+
+  useEffect(() => {
+    if (charIndex < text.length) {
+      const timeout = setTimeout(() => setCharIndex((prev) => prev + 1), 25);
+      return () => clearTimeout(timeout);
+    }
+  }, [charIndex, text]);
+
+  return (
+    <>
+      {text.slice(0, charIndex)}
+      {charIndex < text.length && (
+        <motion.span
+          className="inline-block w-0.5 h-8 bg-amber ml-1 align-middle"
+          animate={{ opacity: [1, 0] }}
+          transition={{ duration: 0.5, repeat: Infinity }}
+        />
+      )}
+    </>
+  );
+}
+
+/* ─────────────────────────────────────────────
+   Shared ambient background gradient
+   ───────────────────────────────────────────── */
+function AmbientBackground() {
+  return (
+    <div className="absolute inset-0 overflow-hidden pointer-events-none">
+      <motion.div
+        className="absolute -top-1/2 -left-1/2 w-[200%] h-[200%] opacity-15"
+        style={{
+          background:
+            "radial-gradient(circle at 30% 40%, rgba(245,158,11,0.3), transparent 50%), radial-gradient(circle at 70% 60%, rgba(234,88,12,0.2), transparent 50%)",
+        }}
+        animate={{ rotate: [0, 360] }}
+        transition={{ duration: 120, repeat: Infinity, ease: "linear" }}
+      />
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────
    Inner component: renders inside StreamCall
    ───────────────────────────────────────────── */
 function GreeterYoloInner({
   spaceId,
   compliments,
   addCompliment,
-  logs,
   addLog,
 }: {
   spaceId: string;
   compliments: ComplimentEntry[];
   addCompliment: (text: string) => void;
-  logs: LogEntry[];
   addLog: (type: LogEntry["type"], message: string) => void;
 }) {
   const { useRemoteParticipants } = useCallStateHooks();
@@ -58,14 +103,17 @@ function GreeterYoloInner({
   );
 
   const [botState, setBotState] = useState<
-    "waiting" | "looking" | "speaking" | "idle"
+    "waiting" | "looking" | "detected" | "speaking" | "idle"
   >("waiting");
-  const [detectionActive, setDetectionActive] = useState(false);
-  const logEndRef = useRef<HTMLDivElement>(null);
-  const complimentEndRef = useRef<HTMLDivElement>(null);
   const lastEventIdRef = useRef(-1);
+  const wowTimeoutRef = useRef<NodeJS.Timeout>(undefined);
+  const speakingTimeoutRef = useRef<NodeJS.Timeout>(undefined);
+  const prevBotStateRef = useRef(botState);
 
-  // Poll the HTTP bridge for agent events (compliments + detections)
+  const hasAgent = Boolean(agentParticipant);
+  const agentIsSpeaking = agentParticipant?.isSpeaking ?? false;
+
+  // Poll the HTTP bridge for agent events
   useEffect(() => {
     let active = true;
 
@@ -82,12 +130,39 @@ function GreeterYoloInner({
           if (evt.type === "compliment" && evt.data?.text) {
             addCompliment(evt.data.text);
             addLog("compliment", evt.data.text);
+
+            // Clear pending timeouts from previous compliment cycle
+            if (wowTimeoutRef.current) clearTimeout(wowTimeoutRef.current);
+            if (speakingTimeoutRef.current)
+              clearTimeout(speakingTimeoutRef.current);
+
+            // Brief "detected" (wow) flash, then enter speaking
+            setBotState("detected");
+            wowTimeoutRef.current = setTimeout(() => {
+              setBotState("speaking");
+            }, 800);
+
+            // Return to looking after estimated TTS duration
+            const durationMs = Math.max(
+              4000,
+              (evt.data.text.length / 12) * 1000 + 2000,
+            );
+            speakingTimeoutRef.current = setTimeout(() => {
+              setBotState((prev) =>
+                prev === "speaking" ? "looking" : prev,
+              );
+            }, 800 + durationMs);
           } else if (evt.type === "detection") {
-            setDetectionActive(Boolean(evt.data?.detected));
             addLog(
               "detection",
               evt.data?.detected ? "Person detected" : "No person in frame",
             );
+            // Transition to "detected" only on positive detection while scanning
+            if (evt.data?.detected) {
+              setBotState((prev) =>
+                prev === "looking" || prev === "idle" ? "detected" : prev,
+              );
+            }
           } else if (evt.type === "info" || evt.type === "error") {
             addLog(evt.type, evt.data?.message || "Unknown event");
           }
@@ -101,7 +176,7 @@ function GreeterYoloInner({
     const interval = setInterval(() => {
       if (active) poll();
     }, POLL_INTERVAL_MS);
-    poll(); // initial poll
+    poll();
 
     return () => {
       active = false;
@@ -109,382 +184,183 @@ function GreeterYoloInner({
     };
   }, [spaceId, addCompliment, addLog]);
 
-  // Detect agent state
+  // Drive bot state from agent participant presence + speaking status.
+  // IMPORTANT: botState is NOT in deps — prevents the effect from overriding
+  // compliment-driven state transitions (detected → speaking → looking cycle).
   useEffect(() => {
-    if (agentParticipant) {
-      if (agentParticipant.isSpeaking) {
-        if (botState !== "speaking") {
-          setBotState("speaking");
-          addLog("info", "Agent is speaking (TTS active)");
-        }
-      } else {
-        if (botState === "waiting") {
-          setBotState("looking");
-          addLog("connection", "Agent connected — YOLO scanning active");
-        } else if (botState === "speaking") {
-          setBotState("idle");
-        }
-      }
-    } else {
-      if (botState !== "waiting") {
-        setBotState("waiting");
-        addLog("info", "Agent disconnected");
-      }
+    if (!hasAgent) {
+      setBotState("waiting");
+      return;
     }
-  }, [agentParticipant, botState, addLog]);
 
-  // Auto-scroll logs and compliments
+    if (agentIsSpeaking) {
+      // isSpeaking from Stream SDK — clear wow timeout, go straight to speaking
+      if (wowTimeoutRef.current) clearTimeout(wowTimeoutRef.current);
+      setBotState("speaking");
+    } else {
+      // Agent connected but not speaking — only transition from "waiting"
+      // Don't override "detected", "speaking", or "looking" — managed by
+      // compliment handler timeouts and detection events
+      setBotState((prev) => (prev === "waiting" ? "looking" : prev));
+    }
+  }, [hasAgent, agentIsSpeaking]);
+
+  // Log state transitions
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logs]);
+    if (prevBotStateRef.current === botState) return;
+    const prev = prevBotStateRef.current;
+    prevBotStateRef.current = botState;
 
+    if (botState === "looking" && prev === "waiting")
+      addLog("connection", "Agent connected — YOLO scanning active");
+    else if (botState === "detected") addLog("detection", "Person detected!");
+    else if (botState === "speaking")
+      addLog("info", "Agent is speaking (TTS active)");
+    else if (botState === "waiting" && prev !== "waiting")
+      addLog("info", "Agent disconnected");
+  }, [botState, addLog]);
+
+  // Clean up timeouts on unmount
   useEffect(() => {
-    complimentEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [compliments]);
+    return () => {
+      if (wowTimeoutRef.current) clearTimeout(wowTimeoutRef.current);
+      if (speakingTimeoutRef.current)
+        clearTimeout(speakingTimeoutRef.current);
+    };
+  }, []);
 
-  const hasAgent = Boolean(agentParticipant);
+  // Bind remote audio manually
+  useEffect(() => {
+    if (!agentParticipant?.audioStream) return;
+    const audio = new Audio();
+    audio.autoplay = true;
+    audio.srcObject = agentParticipant.audioStream;
+    audio.play().catch(console.warn);
+    return () => {
+      audio.srcObject = null;
+    };
+  }, [agentParticipant?.audioStream]);
+
+  const isSpeaking = botState === "speaking";
+  const latestCompliment = compliments[compliments.length - 1];
+
+  const avatarState: AvatarState = botState === "detected" ? "wow" : "idle";
 
   const stateColor = {
     waiting: "bg-yellow-500/50",
     looking: "bg-blue-400",
+    detected: "bg-orange-400",
     speaking: "bg-emerald-400",
     idle: "bg-amber/60",
   };
 
   const stateLabel = {
     waiting: "Waiting for Agent",
-    looking: "YOLO Scanning",
+    looking: "Scanning",
+    detected: "Person Detected",
     speaking: "Speaking",
     idle: "Idle",
   };
 
   return (
-    <div className="flex h-screen bg-[#0C0A09] text-foreground overflow-hidden">
-      {/* ── LEFT PANEL: Video + Status ── */}
-      <div className="flex flex-col items-center justify-center w-1/2 p-8 relative">
-        {/* Background gradient */}
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <motion.div
-            className="absolute -top-1/2 -left-1/2 w-[200%] h-[200%] opacity-15"
-            style={{
-              background:
-                "radial-gradient(circle at 30% 40%, rgba(245,158,11,0.3), transparent 50%), radial-gradient(circle at 70% 60%, rgba(234,88,12,0.2), transparent 50%)",
-            }}
-            animate={{ rotate: [0, 360] }}
-            transition={{ duration: 120, repeat: Infinity, ease: "linear" }}
-          />
-        </div>
+    <div className="fixed inset-0 z-50 bg-[#0C0A09] text-foreground flex flex-col items-center justify-center overflow-hidden">
+      <AmbientBackground />
 
-        {/* Stock video display */}
-        <div className="relative z-10 mb-6">
+      <AnimatePresence mode="wait">
+        {isSpeaking && latestCompliment ? (
+          /* ── Compliment display (Avatar hidden) ── */
           <motion.div
-            className="relative w-80 h-56 rounded-2xl overflow-hidden border-2 bg-black/50"
-            animate={{
-              borderColor:
-                botState === "speaking"
-                  ? [
-                      "rgba(245,158,11,0.8)",
-                      "rgba(16,185,129,0.8)",
-                      "rgba(245,158,11,0.8)",
-                    ]
-                  : botState === "looking"
-                    ? [
-                        "rgba(96,165,250,0.4)",
-                        "rgba(96,165,250,0.8)",
-                        "rgba(96,165,250,0.4)",
-                      ]
-                    : "rgba(245,158,11,0.3)",
-            }}
-            transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+            key="compliment"
+            className="relative z-10 flex flex-col items-center justify-center px-10 max-w-3xl"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            transition={{ duration: 0.4, ease: "easeOut" }}
           >
-            {agentParticipant ? (
-              <ParticipantView
-                participant={agentParticipant}
-                trackType="videoTrack"
-                muteAudio
-                className="w-full h-full object-cover"
+            <p className="text-4xl md:text-5xl text-foreground leading-relaxed text-center wrap-break-word font-medium tracking-tight">
+              <TypewriterText
+                key={latestCompliment.id}
+                text={latestCompliment.text}
               />
-            ) : (
-              <video
-                src="/stock/street_10.mp4"
-                autoPlay
-                loop
-                muted
-                playsInline
-                className="w-full h-full object-cover opacity-50 grayscale"
-              />
-            )}
-
-            {/* Detection badge */}
-            <div className="absolute top-3 right-3 flex items-center gap-1.5 bg-black/70 backdrop-blur-sm px-2.5 py-1 rounded-full">
-              <div
-                className={`w-2 h-2 rounded-full ${detectionActive ? "bg-emerald-400" : "bg-red-400/60"}`}
-              />
-              <span className="text-[10px] font-mono text-white/80 uppercase tracking-wider">
-                {detectionActive ? "Person detected" : "No detection"}
-              </span>
-            </div>
-
-            {/* YOLO label */}
-            <div className="absolute top-3 left-3 bg-black/70 backdrop-blur-sm px-2 py-1 rounded-full">
-              <span className="text-[10px] font-mono text-blue-400 uppercase tracking-wider">
-                YOLO v11 Pose
-              </span>
-            </div>
+            </p>
           </motion.div>
-
-          {/* Pulse rings when speaking */}
-          <AnimatePresence>
-            {botState === "speaking" && (
-              <>
-                {[1, 2, 3].map((i) => (
-                  <motion.div
-                    key={i}
-                    className="absolute inset-0 rounded-2xl border border-emerald-400/20"
-                    initial={{ scale: 1, opacity: 0.4 }}
-                    animate={{ scale: 1.05 + i * 0.04, opacity: 0 }}
-                    transition={{
-                      duration: 2,
-                      repeat: Infinity,
-                      delay: i * 0.3,
-                      ease: "easeOut",
-                    }}
-                  />
-                ))}
-              </>
-            )}
-          </AnimatePresence>
-        </div>
-
-        {/* Status bar */}
-        <div className="relative z-10 flex items-center gap-3 mb-4">
+        ) : (
+          /* ── Avatar display ── */
           <motion.div
-            className={`w-2.5 h-2.5 rounded-full ${stateColor[botState]}`}
-            animate={{
-              scale: hasAgent ? [1, 1.3, 1] : 1,
-              opacity: hasAgent ? [1, 0.6, 1] : 0.5,
-            }}
-            transition={{ duration: 1.5, repeat: Infinity }}
-          />
-          <span className="text-muted-foreground text-xs uppercase tracking-widest font-mono">
-            {stateLabel[botState]}
-          </span>
-          {compliments.length > 0 && (
-            <span className="text-amber/60 text-xs font-mono">
-              · {compliments.length} compliment
-              {compliments.length !== 1 ? "s" : ""}
-            </span>
-          )}
-        </div>
-
-        {/* Latest compliment display */}
-        <AnimatePresence mode="wait">
-          {compliments.length > 0 && (
-            <motion.div
-              key={compliments[compliments.length - 1].id}
-              className="relative z-10 max-w-md px-6 py-4 bg-card/50 backdrop-blur-sm border border-amber/20 rounded-2xl"
-              initial={{ opacity: 0, y: 20, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -20, scale: 0.95 }}
-              transition={{ duration: 0.5, ease: "easeOut" }}
-            >
-              <p className="text-foreground text-base leading-relaxed text-center">
-                <TypewriterText
-                  key={compliments[compliments.length - 1].id}
-                  text={compliments[compliments.length - 1].text}
-                />
-              </p>
-              {compliments[compliments.length - 1].hasBusinessMention && (
-                <div className="mt-2 flex justify-center">
-                  <span className="text-[10px] font-mono text-amber/40 uppercase tracking-wider bg-amber/5 px-2 py-0.5 rounded-full">
-                    business mention
-                  </span>
-                </div>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {compliments.length === 0 && hasAgent && (
-          <motion.p
-            className="relative z-10 text-muted-foreground text-sm text-center max-w-sm"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
+            key="avatar"
+            className="relative z-10 flex flex-col items-center"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            transition={{ duration: 0.4, ease: "easeOut" }}
           >
-            YOLO is scanning the video feed. Compliments will appear when a
-            person is detected...
-          </motion.p>
-        )}
+            <Avatar state={avatarState} />
 
-        {!hasAgent && (
-          <motion.p
-            className="relative z-10 text-muted-foreground text-sm text-center max-w-sm"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-          >
-            Waiting for the AI agent to join the call...
-          </motion.p>
-        )}
-
-        {/* Logo */}
-        <motion.span
-          className="absolute bottom-6 text-amber/20 font-display text-sm italic"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 1 }}
-        >
-          HeyYou · YOLO Test
-        </motion.span>
-      </div>
-
-      {/* ── RIGHT PANEL: Debug Log ── */}
-      <div className="w-1/2 flex flex-col border-l border-border/50 bg-[#0A0908]">
-        {/* Debug header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-border/50 bg-card/30">
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-red-500/80" />
-            <div className="w-3 h-3 rounded-full bg-yellow-500/80" />
-            <div className="w-3 h-3 rounded-full bg-emerald-500/80" />
-            <span className="ml-2 text-xs font-mono text-muted-foreground uppercase tracking-wider">
-              Debug Console
-            </span>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="text-[10px] font-mono text-muted-foreground/60">
-              {logs.length} events
-            </span>
-          </div>
-        </div>
-
-        {/* Compliment history */}
-        <div className="flex-1 flex flex-col min-h-0">
-          <div className="px-5 py-2 border-b border-border/30 bg-card/20">
-            <span className="text-[10px] font-mono text-amber/60 uppercase tracking-widest">
-              Compliment History
-            </span>
-          </div>
-          <div className="flex-1 overflow-y-auto px-5 py-3 space-y-3 min-h-0 max-h-[40vh]">
-            {compliments.length === 0 ? (
-              <p className="text-muted-foreground/40 text-xs font-mono italic py-4 text-center">
-                No compliments yet...
-              </p>
-            ) : (
-              compliments.map((entry) => (
-                <motion.div
-                  key={entry.id}
-                  className="group"
-                  initial={{ opacity: 0, x: 10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.3 }}
-                >
-                  <div className="flex items-start gap-2">
-                    <span className="text-[10px] font-mono text-muted-foreground/40 mt-0.5 shrink-0">
-                      {entry.timestamp.toLocaleTimeString("en-US", {
-                        hour12: false,
-                      })}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-foreground/90 leading-relaxed wrap-break-word">
-                        {entry.text}
-                      </p>
-                      {entry.hasBusinessMention && (
-                        <span className="inline-block mt-1 text-[9px] font-mono text-amber/40 bg-amber/5 px-1.5 py-0.5 rounded">
-                          BIZ
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </motion.div>
-              ))
-            )}
-            <div ref={complimentEndRef} />
-          </div>
-
-          {/* Event log */}
-          <div className="px-5 py-2 border-t border-b border-border/30 bg-card/20">
-            <span className="text-[10px] font-mono text-blue-400/60 uppercase tracking-widest">
-              Event Log
-            </span>
-          </div>
-          <div className="flex-1 overflow-y-auto px-5 py-2 space-y-1 min-h-0 max-h-[40vh]">
-            {logs.map((log) => (
+            {/* Status bar */}
+            <div className="flex items-center gap-2.5 mt-4">
               <motion.div
-                key={log.id}
-                className="flex items-start gap-2 py-0.5"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: 0.15 }}
-              >
-                <span className="text-[10px] font-mono text-muted-foreground/30 shrink-0">
-                  {log.timestamp.toLocaleTimeString("en-US", {
-                    hour12: false,
-                  })}
+                className={`w-2 h-2 rounded-full ${stateColor[botState]}`}
+                animate={{
+                  scale: hasAgent ? [1, 1.3, 1] : 1,
+                  opacity: hasAgent ? [1, 0.6, 1] : 0.5,
+                }}
+                transition={{ duration: 1.5, repeat: Infinity }}
+              />
+              <span className="text-muted-foreground text-[10px] uppercase tracking-widest font-mono">
+                {stateLabel[botState]}
+              </span>
+              {compliments.length > 0 && (
+                <span className="text-amber/60 text-[10px] font-mono">
+                  · {compliments.length} compliment
+                  {compliments.length !== 1 ? "s" : ""}
                 </span>
-                <span
-                  className={`text-[10px] font-mono shrink-0 uppercase w-12 ${
-                    log.type === "error"
-                      ? "text-red-400"
-                      : log.type === "detection"
-                        ? "text-emerald-400"
-                        : log.type === "compliment"
-                          ? "text-amber"
-                          : log.type === "connection"
-                            ? "text-blue-400"
-                            : "text-muted-foreground/50"
-                  }`}
+              )}
+            </div>
+
+            {/* Contextual hint messages */}
+            <AnimatePresence mode="wait">
+              {!hasAgent && (
+                <motion.p
+                  key="no-agent"
+                  className="text-muted-foreground text-sm text-center max-w-sm mt-6"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
                 >
-                  {log.type === "compliment" ? "cmpl" : log.type.slice(0, 4)}
-                </span>
-                <span className="text-xs font-mono text-muted-foreground/70 wrap-break-word min-w-0">
-                  {log.type === "compliment"
-                    ? log.message.slice(0, 60) +
-                      (log.message.length > 60 ? "..." : "")
-                    : log.message}
-                </span>
-              </motion.div>
-            ))}
-            <div ref={logEndRef} />
-          </div>
-        </div>
-      </div>
+                  Waiting for the AI agent to join...
+                </motion.p>
+              )}
+              {hasAgent && botState === "looking" && (
+                <motion.p
+                  key="scanning"
+                  className="text-muted-foreground text-sm text-center max-w-sm mt-6"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                >
+                  Scanning for visitors...
+                </motion.p>
+              )}
+            </AnimatePresence>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Logo */}
+      <motion.span
+        className="absolute bottom-6 text-amber/20 font-display text-sm italic"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 1 }}
+      >
+        HeyYou
+      </motion.span>
     </div>
   );
 }
 
 /* ─────────────────────────────────────────────
-   Typewriter text animation
-   Uses `key` prop from parent to trigger remount on text change
-   ───────────────────────────────────────────── */
-function TypewriterText({ text }: { text: string }) {
-  const [charIndex, setCharIndex] = useState(0);
-
-  useEffect(() => {
-    if (charIndex < text.length) {
-      const timeout = setTimeout(() => {
-        setCharIndex((prev) => prev + 1);
-      }, 25);
-      return () => clearTimeout(timeout);
-    }
-  }, [charIndex, text]);
-
-  const displayedText = text.slice(0, charIndex);
-
-  return (
-    <>
-      {displayedText}
-      {charIndex < text.length && (
-        <motion.span
-          className="inline-block w-0.5 h-4 bg-amber ml-0.5 align-middle"
-          animate={{ opacity: [1, 0] }}
-          transition={{ duration: 0.5, repeat: Infinity }}
-        />
-      )}
-    </>
-  );
-}
-
-/* ─────────────────────────────────────────────
-   Main export: handles connection + wraps inner
+   Main export: handles connection lifecycle
    ───────────────────────────────────────────── */
 export function GreeterYoloCall({ spaceId }: GreeterYoloCallProps) {
   const [client, setClient] = useState<StreamVideoClient | null>(null);
@@ -504,24 +380,14 @@ export function GreeterYoloCall({ spaceId }: GreeterYoloCallProps) {
       /store|shop|arrivals|collection|inside|check out|browse/i.test(text);
     setCompliments((prev) => [
       ...prev,
-      {
-        id: nextId.current++,
-        text,
-        timestamp: new Date(),
-        hasBusinessMention,
-      },
+      { id: nextId.current++, text, timestamp: new Date(), hasBusinessMention },
     ]);
   }, []);
 
   const addLog = useCallback((type: LogEntry["type"], message: string) => {
     setLogs((prev) => [
       ...prev,
-      {
-        id: nextId.current++,
-        type,
-        message,
-        timestamp: new Date(),
-      },
+      { id: nextId.current++, type, message, timestamp: new Date() },
     ]);
   }, []);
 
@@ -533,7 +399,6 @@ export function GreeterYoloCall({ spaceId }: GreeterYoloCallProps) {
       return;
     }
 
-    // Unlock browser audio on user click
     try {
       const ctx = new AudioContext();
       await ctx.resume();
@@ -559,14 +424,12 @@ export function GreeterYoloCall({ spaceId }: GreeterYoloCallProps) {
       const { token } = await res.json();
       addLog("connection", "Token acquired");
 
-      const user: User = { id: userId, name: "YOLO Test Display" };
+      const user: User = { id: userId, name: "YOLO Greeter" };
       const videoClient = new StreamVideoClient({ apiKey, user, token });
       setClient(videoClient);
 
       const videoCall = videoClient.call("default", spaceId);
       await videoCall.join({ create: true });
-      // Camera stays ON — required for --video-track-override to activate on the agent side.
-      // Without a video track from the participant, VLM receives no frames.
       addLog("connection", `Joined call: ${spaceId}`);
 
       setCall(videoCall);
@@ -579,91 +442,114 @@ export function GreeterYoloCall({ spaceId }: GreeterYoloCallProps) {
     }
   };
 
+  // ── Idle ──────────────────────────────────────────────────────────────────
   if (status === "idle") {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-[#0C0A09] text-foreground gap-6">
-        <motion.span
-          className="text-amber font-display text-5xl italic"
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-        >
-          HeyYou
-        </motion.span>
+      <div className="fixed inset-0 z-50 bg-[#0C0A09] text-foreground flex flex-col items-center justify-center">
+        <AmbientBackground />
+
         <motion.div
-          className="flex items-center gap-2 bg-card/50 border border-border/50 px-3 py-1.5 rounded-full"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.2 }}
-        >
-          <div className="w-2 h-2 rounded-full bg-blue-400" />
-          <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
-            YOLO Test Mode
-          </span>
-        </motion.div>
-        <motion.p
-          className="text-muted-foreground text-sm max-w-md text-center leading-relaxed"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.3 }}
-        >
-          This test uses YOLO pose detection to trigger AI compliments. A stock
-          video plays locally while the agent processes via{" "}
-          <code className="text-amber/60 text-xs bg-card px-1.5 py-0.5 rounded">
-            --video-track-override
-          </code>
-          . Compliments appear as text in the debug panel.
-        </motion.p>
-        <motion.button
-          onClick={startSession}
-          className="px-8 py-3 bg-linear-to-r from-amber to-orange-500 text-black font-semibold rounded-full hover:from-amber/90 hover:to-orange-400 transition-all cursor-pointer shadow-lg shadow-amber/20"
+          className="relative z-10"
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.5 }}
+          transition={{ duration: 0.5, ease: "easeOut" }}
+        >
+          <Avatar state="idle" />
+        </motion.div>
+
+        <motion.button
+          onClick={startSession}
+          className="relative z-10 mt-8 px-8 py-3 bg-linear-to-r from-amber to-orange-500 text-black font-semibold rounded-full hover:from-amber/90 hover:to-orange-400 transition-all cursor-pointer shadow-lg shadow-amber/20"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
         >
-          Start YOLO Test
+          Activate Greeter
         </motion.button>
+
         {!apiKey && (
-          <p className="text-red-400 text-xs font-mono">
+          <motion.p
+            className="relative z-10 mt-4 text-red-400 text-xs font-mono"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.4 }}
+          >
             ⚠ Missing NEXT_PUBLIC_STREAM_API_KEY
-          </p>
+          </motion.p>
         )}
       </div>
     );
   }
 
+  // ── Error ─────────────────────────────────────────────────────────────────
   if (status === "error") {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-[#0C0A09] text-foreground gap-4">
-        <p className="text-muted-foreground text-sm">
-          Failed to connect. Check your Stream API keys and try again.
-        </p>
-        <button
-          onClick={() => setStatus("idle")}
-          className="px-6 py-2 border border-amber/30 text-amber rounded-full hover:bg-amber/10 transition-colors cursor-pointer"
+      <div className="fixed inset-0 z-50 bg-[#0C0A09] text-foreground flex flex-col items-center justify-center gap-6">
+        <AmbientBackground />
+
+        <motion.div
+          className="relative z-10"
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
         >
-          Retry
-        </button>
+          <Avatar state="sad" />
+        </motion.div>
+
+        <motion.p
+          className="relative z-10 text-muted-foreground text-sm"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.2 }}
+        >
+          Failed to connect. Check your Stream API keys.
+        </motion.p>
+
+        <motion.button
+          onClick={() => setStatus("idle")}
+          className="relative z-10 px-6 py-2 border border-amber/30 text-amber rounded-full hover:bg-amber/10 transition-colors cursor-pointer"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.3 }}
+          whileHover={{ scale: 1.03 }}
+          whileTap={{ scale: 0.97 }}
+        >
+          Try Again
+        </motion.button>
       </div>
     );
   }
 
+  // ── Connecting ────────────────────────────────────────────────────────────
   if (status === "connecting" || !client || !call) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-[#0C0A09] text-foreground gap-4">
+      <div className="fixed inset-0 z-50 bg-[#0C0A09] text-foreground flex flex-col items-center justify-center gap-6">
+        <AmbientBackground />
+
         <motion.div
-          className="w-10 h-10 border-2 border-blue-400/30 border-t-blue-400 rounded-full"
-          animate={{ rotate: 360 }}
-          transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-        />
-        <p className="text-muted-foreground text-sm font-mono">
-          Connecting to YOLO test session...
-        </p>
+          className="relative z-10"
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+        >
+          <Avatar state="idle" />
+        </motion.div>
+
+        <div className="relative z-10 flex items-center gap-3">
+          <motion.div
+            className="w-4 h-4 border-2 border-amber/30 border-t-amber rounded-full"
+            animate={{ rotate: 360 }}
+            transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+          />
+          <span className="text-muted-foreground text-sm font-mono">
+            Connecting...
+          </span>
+        </div>
       </div>
     );
   }
 
+  // ── Connected ─────────────────────────────────────────────────────────────
   return (
     <StreamVideo client={client}>
       <StreamCall call={call}>
@@ -671,9 +557,9 @@ export function GreeterYoloCall({ spaceId }: GreeterYoloCallProps) {
           spaceId={spaceId}
           compliments={compliments}
           addCompliment={addCompliment}
-          logs={logs}
           addLog={addLog}
         />
+        <GreeterDrawer logs={logs} />
       </StreamCall>
     </StreamVideo>
   );
