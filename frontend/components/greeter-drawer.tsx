@@ -88,7 +88,7 @@ export function GreeterDrawer({ logs }: { logs: LogEntry[] }) {
               YOLO Video Feed
             </p>
             <div className="relative aspect-video rounded-xl overflow-hidden bg-black/50 border border-border/30">
-              {agentParticipant ? (
+              {agentParticipant?.videoStream ? (
                 <ParticipantView
                   participant={agentParticipant}
                   trackType="videoTrack"
@@ -99,7 +99,7 @@ export function GreeterDrawer({ logs }: { logs: LogEntry[] }) {
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-muted-foreground/30" />
                   <p className="text-[10px] font-mono text-muted-foreground/30 uppercase tracking-wider">
-                    Agent not connected
+                    Waiting for YOLO stream
                   </p>
                 </div>
               )}

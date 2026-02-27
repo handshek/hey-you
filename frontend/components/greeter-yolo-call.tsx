@@ -18,6 +18,8 @@ const POLL_INTERVAL_MS = 2000;
 interface GreeterYoloCallProps {
   spaceId: string;
   spaceName?: string;
+  videoInput?: "camera" | "stock";
+  stockVideoUrl?: string;
 }
 
 interface ComplimentEntry {
@@ -362,7 +364,11 @@ function GreeterYoloInner({
 /* ─────────────────────────────────────────────
    Main export: handles connection lifecycle
    ───────────────────────────────────────────── */
-export function GreeterYoloCall({ spaceId }: GreeterYoloCallProps) {
+export function GreeterYoloCall({
+  spaceId,
+  videoInput = "camera",
+  stockVideoUrl,
+}: GreeterYoloCallProps) {
   const [client, setClient] = useState<StreamVideoClient | null>(null);
   const [call, setCall] = useState<ReturnType<
     StreamVideoClient["call"]
@@ -392,6 +398,63 @@ export function GreeterYoloCall({ spaceId }: GreeterYoloCallProps) {
   }, []);
 
   const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
+  const stockVideoElementRef = useRef<HTMLVideoElement | null>(null);
+  const stockVideoStreamRef = useRef<MediaStream | null>(null);
+  const callRef = useRef<ReturnType<StreamVideoClient["call"]> | null>(null);
+  const clientRef = useRef<StreamVideoClient | null>(null);
+
+  const publishStockVideo = useCallback(
+    async (videoCall: ReturnType<StreamVideoClient["call"]>) => {
+      if (!stockVideoUrl) {
+        throw new Error("Missing stockVideoUrl for stock video input mode");
+      }
+
+      const videoEl = document.createElement("video");
+      videoEl.src = stockVideoUrl;
+      videoEl.loop = true;
+      videoEl.muted = true;
+      videoEl.playsInline = true;
+      videoEl.crossOrigin = "anonymous";
+
+      await new Promise<void>((resolve, reject) => {
+        const onLoaded = () => resolve();
+        const onError = () =>
+          reject(new Error(`Failed to load stock video: ${stockVideoUrl}`));
+        videoEl.addEventListener("loadeddata", onLoaded, { once: true });
+        videoEl.addEventListener("error", onError, { once: true });
+      });
+
+      await videoEl.play();
+      const capture = (
+        videoEl as HTMLVideoElement & {
+          captureStream?: () => MediaStream;
+          mozCaptureStream?: () => MediaStream;
+        }
+      ).captureStream;
+      const mozCapture = (
+        videoEl as HTMLVideoElement & {
+          captureStream?: () => MediaStream;
+          mozCaptureStream?: () => MediaStream;
+        }
+      ).mozCaptureStream;
+      const stream = capture?.call(videoEl) ?? mozCapture?.call(videoEl);
+
+      if (!stream) {
+        throw new Error("Browser does not support video captureStream()");
+      }
+
+      if (!stream.getVideoTracks().length) {
+        throw new Error("Stock video stream has no video track");
+      }
+
+      stockVideoElementRef.current = videoEl;
+      stockVideoStreamRef.current = stream;
+
+      await videoCall.publishVideoStream(stream);
+      addLog("connection", "Publishing stock video stream");
+    },
+    [stockVideoUrl, addLog],
+  );
 
   const startSession = async () => {
     if (!apiKey) {
@@ -427,12 +490,22 @@ export function GreeterYoloCall({ spaceId }: GreeterYoloCallProps) {
       const user: User = { id: userId, name: "YOLO Greeter" };
       const videoClient = new StreamVideoClient({ apiKey, user, token });
       setClient(videoClient);
+      clientRef.current = videoClient;
 
       const videoCall = videoClient.call("default", spaceId);
       await videoCall.join({ create: true });
       addLog("connection", `Joined call: ${spaceId}`);
 
+      if (videoInput === "stock") {
+        await videoCall.camera.disable().catch(() => undefined);
+        await publishStockVideo(videoCall);
+      } else {
+        await videoCall.camera.enable();
+        addLog("connection", "Camera enabled");
+      }
+
       setCall(videoCall);
+      callRef.current = videoCall;
       setStatus("connected");
       addLog("connection", "✅ Connected — waiting for agent");
     } catch (err) {
@@ -441,6 +514,19 @@ export function GreeterYoloCall({ spaceId }: GreeterYoloCallProps) {
       setStatus("error");
     }
   };
+
+  useEffect(() => {
+    return () => {
+      stockVideoElementRef.current?.pause();
+      stockVideoElementRef.current = null;
+      stockVideoStreamRef.current?.getTracks().forEach((track) => track.stop());
+      stockVideoStreamRef.current = null;
+      callRef.current?.leave().catch(() => undefined);
+      clientRef.current?.disconnectUser().catch(() => undefined);
+      callRef.current = null;
+      clientRef.current = null;
+    };
+  }, []);
 
   // ── Idle ──────────────────────────────────────────────────────────────────
   if (status === "idle") {
