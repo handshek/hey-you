@@ -7,8 +7,8 @@ It uses the Vision Agents SDK by Stream.
 
 ## Running locally
 
-Terminal 1: `cd agent && uv run agent.py run`
-Terminal 2: `cd frontend && bun dev`
+Terminal 1: `cd frontend && bun run dev`
+Terminal 2: `cd agent && uv run agent_yolo.py serve --host 127.0.0.1 --port 8000`
 
 Both must use the same Stream API key. The frontend creates a call, the agent joins it.
 
@@ -24,7 +24,7 @@ frontend/ (Next.js 15, App Router, TypeScript, TailwindCSS, shadcn/ui)
     │
     ├── WebRTC via Stream Edge Network (~30ms latency)
     │
-agent/ (Python 3.12+, vision-agents SDK)
+agent/ (Python 3.11+, vision-agents SDK)
     │
     │  Joins the SAME Stream call as an AI participant
     │  Receives video frames, runs YOLO for person detection,
@@ -38,81 +38,89 @@ The frontend and agent never communicate directly. Both join the same Stream vid
 ## Monorepo structure
 
 ```
-/Users/abhi/dev/hey-you
 ├── agent
-│ ├── .env.example _
-│ ├── agent.py _ +
-│ ├── agent_yolo.py _ +
-│ ├── pyproject.toml _
-│ ├── uv.lock _
-│ └── yolo11n-pose.pt _
+│   ├── .env.example *
+│   ├── agent.py * +
+│   ├── agent_yolo.py * +
+│   ├── pyproject.toml *
+│   ├── uv.lock *
+│   └── yolo11n-pose.pt *
 ├── frontend
-│ ├── app
-│ │ ├── (dashboard)
-│ │ │ ├── spaces
-│ │ │ │ ├── [id]
-│ │ │ │ │ ├── greeter
-│ │ │ │ │ │ ├── layout.tsx _ +
-│ │ │ │ │ │ └── page.tsx _ +
-│ │ │ │ │ ├── greeter-test
-│ │ │ │ │ │ └── page.tsx _ +
-│ │ │ │ │ └── page.tsx _ +
-│ │ │ │ ├── new
-│ │ │ │ │ └── page.tsx _ +
-│ │ │ │ └── page.tsx _ +
-│ │ │ └── layout.tsx _ +
-│ │ ├── api
-│ │ │ ├── agent-events
-│ │ │ │ └── route.ts _ +
-│ │ │ └── stream-token
-│ │ │ └── route.ts _ +
-│ │ ├── favicon.ico _
-│ │ ├── globals.css _
-│ │ ├── layout.tsx _ +
-│ │ └── page.tsx _ +
-│ ├── components
-│ │ ├── ui
-│ │ │ ├── badge.tsx _ +
-│ │ │ ├── button.tsx _ +
-│ │ │ ├── card.tsx _ +
-│ │ │ ├── dropdown-menu.tsx _ +
-│ │ │ ├── input.tsx _ +
-│ │ │ ├── label.tsx _ +
-│ │ │ ├── select.tsx _ +
-│ │ │ ├── separator.tsx _ +
-│ │ │ ├── sonner.tsx _ +
-│ │ │ └── textarea.tsx _ +
-│ │ ├── bot-face.tsx _ +
-│ │ ├── greeter-call.tsx _ +
-│ │ ├── greeter-screen.tsx _ +
-│ │ ├── greeter-yolo-call.tsx _ +
-│ │ ├── streaming-text.tsx _ +
-│ │ └── voice-waveform.tsx _ +
-│ ├── lib
-│ │ ├── stream.ts _ +
-│ │ └── utils.ts _ +
-│ ├── public
-│ │ ├── stock
-│ │ │ └── street_10.mp4 _
-│ │ ├── file.svg _
-│ │ ├── globe.svg _
-│ │ ├── next.svg _
-│ │ ├── vercel.svg _
-│ │ └── window.svg _
-│ ├── types
-│ │ └── index.ts _ +
-│ ├── .gitignore _
-│ ├── README.md _
-│ ├── bun.lock _
-│ ├── components.json _
-│ ├── eslint.config.mjs _
-│ ├── next.config.ts _ +
-│ ├── package.json _
-│ ├── postcss.config.mjs _
-│ └── tsconfig.json _
-├── .gitignore _
-├── AGENTS.md _
-└── README.md _
+│   ├── app
+│   │   ├── api
+│   │   │   ├── agent-events
+│   │   │   │   └── route.ts * +
+│   │   │   ├── agent-session
+│   │   │   │   ├── start
+│   │   │   │   │   └── route.ts * +
+│   │   │   │   └── stop
+│   │   │   │       └── route.ts * +
+│   │   │   └── stream-token
+│   │   │       └── route.ts * +
+│   │   ├── create
+│   │   │   └── page.tsx * +
+│   │   ├── greeter
+│   │   │   ├── [id]
+│   │   │   │   └── page.tsx * +
+│   │   │   └── demo
+│   │   │       └── page.tsx * +
+│   │   ├── favicon.ico *
+│   │   ├── globals.css *
+│   │   ├── layout.tsx * +
+│   │   ├── not-found.tsx * +
+│   │   └── page.tsx * +
+│   ├── components
+│   │   ├── avatar
+│   │   │   ├── Avatar.tsx * +
+│   │   │   ├── Eyes.tsx * +
+│   │   │   └── Mouth.tsx * +
+│   │   ├── ui
+│   │   │   ├── badge.tsx * +
+│   │   │   ├── button.tsx * +
+│   │   │   ├── card.tsx * +
+│   │   │   ├── drawer.tsx * +
+│   │   │   ├── dropdown-menu.tsx * +
+│   │   │   ├── input.tsx * +
+│   │   │   ├── label.tsx * +
+│   │   │   ├── select.tsx * +
+│   │   │   ├── separator.tsx * +
+│   │   │   ├── sonner.tsx * +
+│   │   │   └── textarea.tsx * +
+│   │   ├── bot-face.tsx * +
+│   │   ├── greeter-call.tsx * +
+│   │   ├── greeter-drawer.tsx * +
+│   │   ├── greeter-screen.tsx * +
+│   │   ├── greeter-yolo-call.tsx * +
+│   │   ├── streaming-text.tsx * +
+│   │   └── voice-waveform.tsx * +
+│   ├── lib
+│   │   ├── space-config.ts * +
+│   │   ├── stream.ts * +
+│   │   └── utils.ts * +
+│   ├── public
+│   │   ├── stock
+│   │   │   ├── convo_21.mp4 *
+│   │   │   ├── movie_24.mp4 *
+│   │   │   └── street_10.mp4 *
+│   │   ├── file.svg *
+│   │   ├── globe.svg *
+│   │   ├── next.svg *
+│   │   ├── vercel.svg *
+│   │   └── window.svg *
+│   ├── types
+│   │   └── index.ts * +
+│   ├── .gitignore *
+│   ├── README.md *
+│   ├── bun.lock *
+│   ├── components.json *
+│   ├── eslint.config.mjs *
+│   ├── next.config.ts * +
+│   ├── package.json *
+│   ├── postcss.config.mjs *
+│   └── tsconfig.json *
+├── .gitignore *
+├── AGENTS.md *
+└── README.md *
 ```
 
 ## Tech stack
@@ -130,7 +138,7 @@ The frontend and agent never communicate directly. Both join the same Stream vid
 
 ### Agent
 
-- Python 3.12+
+- Python 3.11+
 - vision-agents SDK by Stream (v0.3+)
 - Plugins: `getstream` (edge network), `gemini` (Realtime LLM with native video), `ultralytics` (YOLO pose detection)
 - `uv` package manager
@@ -167,23 +175,23 @@ The frontend and agent never communicate directly. Both join the same Stream vid
 
 ### Frontend (`frontend/.env.local`)
 
-```
-
-NEXT_PUBLIC_STREAM_API_KEY=
-STREAM_API_SECRET=
-NEXT_PUBLIC_APP_URL=http://localhost:3000
-
-```
+| Variable                     | Description                                                           |
+| ---------------------------- | --------------------------------------------------------------------- |
+| `NEXT_PUBLIC_STREAM_API_KEY` | Stream Video public API key                                           |
+| `STREAM_API_SECRET`          | Stream Video secret (server-side only)                                |
+| `NEXT_PUBLIC_APP_URL`        | App URL (default: `http://localhost:3000`)                            |
+| `AGENT_SERVICE_URL`          | Agent service base URL (default local: `http://127.0.0.1:8000`)       |
+| `AGENT_SERVICE_SECRET`       | Shared secret used by frontend backend when calling agent `/sessions` |
 
 ### Agent (`agent/.env`)
 
-```
-
-STREAM_API_KEY=
-STREAM_API_SECRET=
-GOOGLE_API_KEY=
-
-```
+| Variable               | Description                                               |
+| ---------------------- | --------------------------------------------------------- |
+| `STREAM_API_KEY`       | Stream Video API key                                      |
+| `STREAM_API_SECRET`    | Stream Video API secret                                   |
+| `OPENROUTER_API_KEY`   | OpenRouter key used by `agent_yolo.py`                    |
+| `GOOGLE_API_KEY`       | Google AI API key (used by other agent variants)          |
+| `AGENT_SERVICE_SECRET` | Shared secret required to call agent `serve` session APIs |
 
 ## Rules
 

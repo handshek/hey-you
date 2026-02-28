@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
 /**
+ * DEPRECATED:
+ * This in-memory bridge was used for local polling (agent -> frontend).
+ * Runtime now uses Stream custom call events directly.
+ *
  * Simple in-memory event store for agent → frontend communication.
  * The agent POSTs events here, and the frontend polls via GET.
  *

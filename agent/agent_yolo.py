@@ -1,18 +1,66 @@
 import asyncio
+from datetime import datetime
 import logging
+from typing import Any
 
 from dotenv import load_dotenv
-from vision_agents.core import Agent, AgentLauncher, User, Runner
+from fastapi import HTTPException, Request
+from vision_agents.core import Agent, AgentLauncher, Runner, ServeOptions, User
 from vision_agents.core.llm.events import LLMResponseCompletedEvent
+from vision_agents.core.utils.video_track import QueuedVideoTrack
 from vision_agents.plugins import getstream, openai, ultralytics
 import os
+
+# ── VLM raw-source override ──────────────────────────────────────────────────
+# By default the SDK sends the highest-priority track to the VLM, which is the
+# YOLO-annotated output (priority 2). This subclass forces the VLM to watch the
+# raw participant camera track instead, so the model sees actual clothing/colors
+# rather than skeleton overlays.  YOLO still publishes its annotated stream for
+# the debug drawer in the frontend.
+
+
+class _RawSourceAgent(Agent):
+    """Agent that forces the VLM to consume the raw (non-processed) video track."""
+
+    async def _on_track_change(self, track_id: str):
+        non_processed = [
+            t for t in self._active_video_tracks.values() if not t.processor
+        ]
+        if not non_processed:
+            if hasattr(self.llm, "stop_watching_video_track"):
+                await self.llm.stop_watching_video_track()
+            for proc in self.video_processors:
+                await proc.stop_processing()
+            return
+
+        source = sorted(non_processed, key=lambda t: t.priority, reverse=True)[0]
+        self._active_source_track_id = source.id
+
+        # Still feed raw frames into processors so YOLO annotates + publishes.
+        await self._track_to_video_processors(source)
+
+        # Track the processed output for diagnostics.
+        all_tracks = sorted(
+            self._active_video_tracks.values(),
+            key=lambda t: t.priority,
+            reverse=True,
+        )
+        if all_tracks:
+            self._active_processed_track_id = all_tracks[0].id
+
+        # Key override: send RAW source to the VLM, not the processed track.
+        if hasattr(self.llm, "watch_video_track"):
+            await self.llm.watch_video_track(
+                source.track, shared_forwarder=source.forwarder
+            )
+
+
+# Toggle: set YOLO_LLM_VIDEO_SOURCE=processed to revert to SDK default behavior.
+_LLM_VIDEO_SOURCE = os.getenv("YOLO_LLM_VIDEO_SOURCE", "raw").strip().lower()
 
 logger = logging.getLogger(__name__)
 
 load_dotenv()
-
-# URL of the Next.js API route for agent→frontend text delivery
-EVENTS_API_URL = "http://localhost:3000/api/agent-events"
 
 INSTRUCTIONS = """
 You are HeyYou — a charming, slightly funny AI greeter at the entrance of a
@@ -89,25 +137,165 @@ COMPLIMENT_PROMPTS = [
 ]
 
 
-async def _post_event(call_id: str, event_type: str, data: dict) -> None:
-    """POST an event to the Next.js API route for the frontend to consume."""
-    import aiohttp
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("Invalid %s=%s, falling back to %s", name, raw, default)
+        return default
+
+
+def _bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    value = _env_int(name, default)
+    bounded = max(minimum, min(maximum, value))
+    if bounded != value:
+        logger.warning(
+            "%s=%s out of bounds, clamped to %s (range %s-%s)",
+            name,
+            value,
+            bounded,
+            minimum,
+            maximum,
+        )
+    return bounded
+
+
+def _get_idle_timeout_seconds() -> float:
+    raw = os.getenv("AGENT_IDLE_TIMEOUT_SECONDS", "60")
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid AGENT_IDLE_TIMEOUT_SECONDS=%s, falling back to 60", raw
+        )
+        return 60.0
+
+
+def _get_wait_for_participant_timeout_seconds() -> float:
+    raw = os.getenv("AGENT_WAIT_FOR_PARTICIPANT_TIMEOUT_SECONDS", "20")
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid AGENT_WAIT_FOR_PARTICIPANT_TIMEOUT_SECONDS=%s, falling back to 20",
+            raw,
+        )
+        return 20.0
+
+    if value <= 0:
+        logger.warning(
+            "AGENT_WAIT_FOR_PARTICIPANT_TIMEOUT_SECONDS=%s must be > 0, falling back to 20",
+            value,
+        )
+        return 20.0
+
+    return value
+
+
+# ── Auth helpers ───────────────────────────────────────────────────────────
+
+
+def _extract_provided_secret(request: Request) -> str | None:
+    secret = request.headers.get("x-agent-secret")
+    if secret:
+        return secret
+
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        return auth.split(" ", 1)[1].strip()
+
+    return None
+
+
+def _require_service_secret(request: Request) -> None:
+    expected_secret = os.getenv("AGENT_SERVICE_SECRET")
+
+    # Local hackathon fallback: if unset, keep service open.
+    if not expected_secret:
+        return
+
+    provided_secret = _extract_provided_secret(request)
+    if provided_secret != expected_secret:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _can_start_session(request: Request) -> None:
+    _require_service_secret(request)
+
+
+def _can_close_session(request: Request) -> None:
+    _require_service_secret(request)
+
+
+def _can_view_session(request: Request) -> None:
+    _require_service_secret(request)
+
+
+def _can_view_metrics(request: Request) -> None:
+    _require_service_secret(request)
+
+
+async def _emit_call_event(
+    agent: Agent,
+    call_id: str,
+    event_type: str,
+    data: dict[str, Any],
+    session_id: str | None = None,
+) -> None:
+    payload = {
+        "source": "heyyou-agent",
+        "event_type": event_type,
+        "call_id": call_id,
+        "session_id": session_id,
+        "data": data,
+        "ts": datetime.utcnow().isoformat() + "Z",
+    }
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                EVENTS_API_URL,
-                json={"call_id": call_id, "type": event_type, "data": data},
-                timeout=aiohttp.ClientTimeout(total=3),
-            ) as resp:
-                if resp.status == 200:
-                    logger.debug(f"📤 Event posted to frontend: {event_type}")
+        await agent.send_custom_event(payload)
     except Exception as e:
-        logger.debug(f"Event POST error (non-fatal): {e}")
+        logger.debug("Call custom event send error (non-fatal): %s", e)
 
 
 async def create_agent(**kwargs) -> Agent:
-    agent = Agent(
+    yolo_process_fps = _bounded_int("YOLO_PROCESS_FPS", 3, 1, 5)
+    yolo_output_fps = _bounded_int("YOLO_OUTPUT_FPS", 3, 1, 5)
+    lite_annotations = _env_bool("YOLO_LITE_ANNOTATIONS", True)
+
+    yolo_processor = ultralytics.YOLOPoseProcessor(
+        model_path="yolo11n-pose.pt",
+        conf_threshold=0.5,
+        fps=yolo_process_fps,
+        max_workers=4,
+        enable_hand_tracking=not lite_annotations,
+        enable_wrist_highlights=not lite_annotations,
+    )
+    # Override plugin default (1 FPS track) so debug stream is actually real-time.
+    yolo_processor._video_track = QueuedVideoTrack(  # noqa: SLF001
+        fps=yolo_output_fps,
+        max_queue_size=yolo_output_fps * 3,
+    )
+    logger.info(
+        "YOLO configured: process_fps=%s output_fps=%s lite_annotations=%s",
+        yolo_process_fps,
+        yolo_output_fps,
+        lite_annotations,
+    )
+
+    AgentClass = _RawSourceAgent if _LLM_VIDEO_SOURCE == "raw" else Agent
+    logger.info("LLM video source: %s (agent_class=%s)", _LLM_VIDEO_SOURCE, AgentClass.__name__)
+
+    agent = AgentClass(
         edge=getstream.Edge(),
         agent_user=User(name="HeyYou", id="heyyou-agent"),
         instructions=INSTRUCTIONS,
@@ -119,58 +307,191 @@ async def create_agent(**kwargs) -> Agent:
             frame_buffer_seconds=5,
         ),
         # No TTS — text-only mode, compliments posted to frontend via HTTP
-        # YOLO processor for pose detection (also required by SDK for video processing)
-        processors=[
-            ultralytics.YOLOPoseProcessor(
-                model_path="yolo11n-pose.pt",
-                conf_threshold=0.5,
-            )
-        ],
+        # YOLO processor handles detection and publishes annotated video.
+        processors=[yolo_processor],
     )
     return agent
 
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     await agent.create_user()
+    session_id = agent.id
+    participant_wait_timeout_seconds = _get_wait_for_participant_timeout_seconds()
+    emitted_session_error = False
 
-    call = await agent.create_call(call_type, call_id)
+    logger.info(
+        "🤖 Session starting call_id=%s session_id=%s timeout_s=%.1f",
+        call_id,
+        session_id,
+        participant_wait_timeout_seconds,
+    )
 
     @agent.events.subscribe
     async def on_llm_response(event: LLMResponseCompletedEvent):
-        """POST the LLM response text to the frontend via HTTP bridge."""
-        logger.info(f"📨 Compliment: {event.text}")
-        await _post_event(call_id, "compliment", {"text": event.text})
+        """Emit the LLM response text to frontend listeners via Stream custom event."""
+        logger.info("📨 Compliment call_id=%s session_id=%s: %s", call_id, session_id, event.text)
+        await _emit_call_event(
+            agent,
+            call_id,
+            "compliment",
+            {"text": event.text},
+            session_id=session_id,
+        )
 
-    # Modeled directly on the proven agent.py pattern:
-    # simple time-based loop, no detection gating.
-    async with agent.join(call):
-        logger.info("🤖 Waiting for participant to join...")
-        await agent.wait_for_participant()
-
-        logger.info("🤖 Participant joined! Buffering video frames for 6s...")
-        await asyncio.sleep(6)
-
-        logger.info("🤖 Giving initial compliment...")
-        try:
-            await agent.simple_response(COMPLIMENT_PROMPTS[0])
-        except Exception as e:
-            logger.warning(f"⚠️ Initial compliment failed: {e}")
-
-        # Give a new compliment every 25 seconds — same as agent.py
-        compliment_index = 1
-        while True:
-            await asyncio.sleep(25)
-
-            logger.info(f"🤖 Giving compliment #{compliment_index + 1}...")
-            prompt = COMPLIMENT_PROMPTS[compliment_index % len(COMPLIMENT_PROMPTS)]
+    call = await agent.create_call(call_type, call_id)
+    await _emit_call_event(
+        agent,
+        call_id,
+        "session_starting",
+        {"message": "Agent session starting"},
+        session_id=session_id,
+    )
+    try:
+        # Exactly one join lifecycle per session.
+        # If it fails, let the session end and restart via a fresh session.
+        async with agent.join(call):
+            logger.info(
+                "🤖 Waiting for participant call_id=%s session_id=%s", call_id, session_id
+            )
             try:
-                await agent.simple_response(prompt)
-            except Exception as e:
-                logger.warning(f"⚠️ Compliment failed: {e}")
-                break
+                await asyncio.wait_for(
+                    agent.wait_for_participant(), timeout=participant_wait_timeout_seconds
+                )
+            except TimeoutError as timeout_error:
+                detail = (
+                    "No participant joined within "
+                    f"{participant_wait_timeout_seconds:.0f}s"
+                )
+                emitted_session_error = True
+                logger.warning(
+                    "⚠️ %s call_id=%s session_id=%s",
+                    detail,
+                    call_id,
+                    session_id,
+                )
+                await _emit_call_event(
+                    agent,
+                    call_id,
+                    "session_error",
+                    {"message": detail},
+                    session_id=session_id,
+                )
+                raise RuntimeError(detail) from timeout_error
 
-            compliment_index += 1
+            await _emit_call_event(
+                agent,
+                call_id,
+                "joined_call",
+                {"message": "Participant joined. Agent active."},
+                session_id=session_id,
+            )
+
+            logger.info(
+                "🤖 Participant joined call_id=%s session_id=%s; buffering 3s...",
+                call_id,
+                session_id,
+            )
+            await asyncio.sleep(3)
+
+            await _emit_call_event(
+                agent,
+                call_id,
+                "annotation_stream_ready",
+                {"message": "YOLO annotation stream ready"},
+                session_id=session_id,
+            )
+
+            logger.info(
+                "🤖 Giving initial compliment call_id=%s session_id=%s",
+                call_id,
+                session_id,
+            )
+            try:
+                await agent.simple_response(COMPLIMENT_PROMPTS[0])
+            except Exception as e:
+                logger.warning(
+                    "⚠️ Initial compliment failed call_id=%s session_id=%s: %s",
+                    call_id,
+                    session_id,
+                    e,
+                )
+                await _emit_call_event(
+                    agent,
+                    call_id,
+                    "error",
+                    {"message": f"Initial compliment failed: {e}"},
+                    session_id=session_id,
+                )
+
+            # Give a new compliment every 25 seconds — same as agent.py
+            compliment_index = 1
+            while True:
+                await asyncio.sleep(25)
+
+                logger.info(
+                    "🤖 Giving compliment #%s call_id=%s session_id=%s",
+                    compliment_index + 1,
+                    call_id,
+                    session_id,
+                )
+                prompt = COMPLIMENT_PROMPTS[compliment_index % len(COMPLIMENT_PROMPTS)]
+                try:
+                    await agent.simple_response(prompt)
+                except Exception as e:
+                    logger.warning(
+                        "⚠️ Compliment failed call_id=%s session_id=%s: %s",
+                        call_id,
+                        session_id,
+                        e,
+                    )
+                    await _emit_call_event(
+                        agent,
+                        call_id,
+                        "error",
+                        {"message": f"Compliment failed: {e}"},
+                        session_id=session_id,
+                    )
+                    continue
+
+                compliment_index += 1
+    except Exception as e:
+        logger.warning(
+            "⚠️ Agent session failed call_id=%s session_id=%s: %s",
+            call_id,
+            session_id,
+            e,
+        )
+        if not emitted_session_error:
+            await _emit_call_event(
+                agent,
+                call_id,
+                "session_error",
+                {"message": f"Agent session failed: {e}"},
+                session_id=session_id,
+            )
+        raise
+    finally:
+        logger.info("🤖 Session stopping call_id=%s session_id=%s", call_id, session_id)
+        await _emit_call_event(
+            agent,
+            call_id,
+            "session_stopping",
+            {"message": "Agent session stopping"},
+            session_id=session_id,
+        )
 
 
 if __name__ == "__main__":
-    Runner(AgentLauncher(create_agent=create_agent, join_call=join_call)).cli()
+    launcher = AgentLauncher(
+        create_agent=create_agent,
+        join_call=join_call,
+        agent_idle_timeout=_get_idle_timeout_seconds(),
+        max_sessions_per_call=1,
+    )
+    serve_options = ServeOptions(
+        can_start_session=_can_start_session,
+        can_close_session=_can_close_session,
+        can_view_session=_can_view_session,
+        can_view_metrics=_can_view_metrics,
+    )
+    Runner(launcher=launcher, serve_options=serve_options).cli()
