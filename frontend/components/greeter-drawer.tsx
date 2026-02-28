@@ -37,7 +37,13 @@ const TRACK_TYPE_SCREEN_SHARE = 3;
    Self-contained debug drawer
    Must be rendered inside <StreamCall> context
    ───────────────────────────────────────────── */
-export function GreeterDrawer({ logs }: { logs: LogEntry[] }) {
+export function GreeterDrawer({
+  logs,
+  onDisconnect,
+}: {
+  logs: LogEntry[];
+  onDisconnect?: () => void;
+}) {
   const { useRemoteParticipants, useLocalParticipant } = useCallStateHooks();
   const remoteParticipants = useRemoteParticipants();
   const localParticipant = useLocalParticipant();
@@ -238,6 +244,17 @@ export function GreeterDrawer({ logs }: { logs: LogEntry[] }) {
               <div ref={logEndRef} />
             </div>
           </div>
+
+          {onDisconnect && (
+            <div className="p-4 border-t border-border/20 shrink-0">
+              <button
+                onClick={onDisconnect}
+                className="w-full py-2.5 text-[10px] font-mono uppercase tracking-widest text-red-500 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 hover:border-red-500/30 rounded-lg transition-colors cursor-pointer"
+              >
+                Disconnect
+              </button>
+            </div>
+          )}
         </DrawerPrimitive.Content>
       </DrawerPortal>
     </Drawer>

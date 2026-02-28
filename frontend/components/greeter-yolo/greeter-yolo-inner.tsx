@@ -19,7 +19,6 @@ interface GreeterYoloInnerProps {
   ) => void;
   onTrustedAgentEvent: (payload: AgentCustomEventPayload) => void;
   onLocalCallingStateChange: (callingState: string) => void;
-  onDisconnect: () => void;
 }
 
 export function GreeterYoloInner({
@@ -30,7 +29,6 @@ export function GreeterYoloInner({
   onAgentPresenceChange,
   onTrustedAgentEvent,
   onLocalCallingStateChange,
-  onDisconnect,
 }: GreeterYoloInnerProps) {
   const { botState, hasAgent, latestCompliment } = useGreeterBotState({
     callId,
@@ -47,8 +45,6 @@ export function GreeterYoloInner({
       botState={botState}
       hasAgent={hasAgent}
       latestCompliment={latestCompliment}
-      complimentCount={compliments.length}
-      onDisconnect={onDisconnect}
     />
   );
 }

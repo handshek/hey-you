@@ -13,15 +13,12 @@ interface GreeterLiveScreenProps {
   botState: GreeterBotState;
   hasAgent: boolean;
   latestCompliment?: ComplimentEntry;
-  complimentCount: number;
-  onDisconnect: () => void;
 }
 
 export function GreeterLiveScreen({
   botState,
   hasAgent,
   latestCompliment,
-  onDisconnect,
 }: GreeterLiveScreenProps) {
   const isSpeaking = botState === "speaking";
   const avatarState: AvatarState = botState === "detected" ? "wow" : "idle";
@@ -79,18 +76,6 @@ export function GreeterLiveScreen({
           </motion.div>
         )}
       </AnimatePresence>
-
-      <motion.button
-        onClick={onDisconnect}
-        className="absolute bottom-6 left-6 z-10 px-4 py-1.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground/50 hover:text-red-400 border border-border/20 hover:border-red-400/30 rounded-full transition-colors cursor-pointer backdrop-blur-sm"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 1.5 }}
-        whileHover={{ scale: 1.03 }}
-        whileTap={{ scale: 0.97 }}
-      >
-        Disconnect
-      </motion.button>
 
       <motion.span
         className="absolute bottom-6 text-amber/20 font-display text-sm italic"

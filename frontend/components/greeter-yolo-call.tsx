@@ -71,9 +71,8 @@ export function GreeterYoloCall({
           onAgentPresenceChange={handleAgentPresenceChange}
           onTrustedAgentEvent={handleTrustedAgentEvent}
           onLocalCallingStateChange={handleLocalCallingStateChange}
-          onDisconnect={disconnect}
         />
-        <GreeterDrawer logs={logs} />
+        <GreeterDrawer logs={logs} onDisconnect={disconnect} />
       </StreamCall>
     </StreamVideo>
   );
