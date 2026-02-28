@@ -3,6 +3,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { Avatar, type AvatarState } from "@/components/avatar/Avatar";
 import { TypewriterText } from "@/components/greeter-yolo/typewriter-text";
+import { BarVisualizer, type AgentState } from "@/components/ui/bar-visualizer";
 import type {
   ComplimentEntry,
   GreeterBotState,
@@ -16,31 +17,25 @@ interface GreeterLiveScreenProps {
   onDisconnect: () => void;
 }
 
-const STATE_COLOR: Record<GreeterBotState, string> = {
-  waiting: "bg-yellow-500/50",
-  looking: "bg-blue-400",
-  detected: "bg-orange-400",
-  speaking: "bg-emerald-400",
-  idle: "bg-amber/60",
-};
-
-const STATE_LABEL: Record<GreeterBotState, string> = {
-  waiting: "Waiting for Agent",
-  looking: "Scanning",
-  detected: "Person Detected",
-  speaking: "Speaking",
-  idle: "Idle",
-};
-
 export function GreeterLiveScreen({
   botState,
   hasAgent,
   latestCompliment,
-  complimentCount,
   onDisconnect,
 }: GreeterLiveScreenProps) {
   const isSpeaking = botState === "speaking";
   const avatarState: AvatarState = botState === "detected" ? "wow" : "idle";
+
+  let visualizerState: AgentState | undefined = undefined;
+  if (!hasAgent) {
+    visualizerState = "initializing";
+  } else if (botState === "looking") {
+    visualizerState = "connecting";
+  } else if (botState === "detected") {
+    visualizerState = "thinking";
+  } else if (botState === "speaking") {
+    visualizerState = "speaking";
+  }
 
   return (
     <div className="fixed inset-0 z-50 bg-[#0C0A09] text-foreground flex flex-col items-center justify-center overflow-hidden">
@@ -55,7 +50,10 @@ export function GreeterLiveScreen({
             transition={{ duration: 0.4, ease: "easeOut" }}
           >
             <p className="w-full text-[clamp(2rem,4.6vw,5.3rem)] text-foreground leading-[1.15] text-center break-words font-medium tracking-tight">
-              <TypewriterText key={latestCompliment.id} text={latestCompliment.text} />
+              <TypewriterText
+                key={latestCompliment.id}
+                text={latestCompliment.text}
+              />
             </p>
           </motion.div>
         ) : (
@@ -69,50 +67,15 @@ export function GreeterLiveScreen({
           >
             <Avatar state={avatarState} />
 
-            <div className="flex items-center gap-2.5 mt-4">
-              <motion.div
-                className={`w-2 h-2 rounded-full ${STATE_COLOR[botState]}`}
-                animate={{
-                  scale: hasAgent ? [1, 1.3, 1] : 1,
-                  opacity: hasAgent ? [1, 0.6, 1] : 0.5,
-                }}
-                transition={{ duration: 1.5, repeat: Infinity }}
+            <div className="mt-12 flex justify-center w-full px-4">
+              <BarVisualizer
+                state={visualizerState}
+                barCount={8}
+                centerAlign={true}
+                demo={true}
+                className="bg-transparent! h-28 w-full max-w-sm"
               />
-              <span className="text-muted-foreground text-[10px] uppercase tracking-widest font-mono">
-                {STATE_LABEL[botState]}
-              </span>
-              {complimentCount > 0 && (
-                <span className="text-amber/60 text-[10px] font-mono">
-                  {" - "}
-                  {complimentCount} compliment{complimentCount !== 1 ? "s" : ""}
-                </span>
-              )}
             </div>
-
-            <AnimatePresence mode="wait">
-              {!hasAgent && (
-                <motion.p
-                  key="no-agent"
-                  className="text-muted-foreground text-sm text-center max-w-sm mt-6"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                >
-                  Waiting for the AI agent to join...
-                </motion.p>
-              )}
-              {hasAgent && botState === "looking" && (
-                <motion.p
-                  key="scanning"
-                  className="text-muted-foreground text-sm text-center max-w-sm mt-6"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                >
-                  Scanning for visitors...
-                </motion.p>
-              )}
-            </AnimatePresence>
           </motion.div>
         )}
       </AnimatePresence>
