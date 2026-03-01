@@ -146,12 +146,13 @@ The frontend and agent never communicate directly. Both join the same Stream vid
 ### External services
 
 - **Stream** (getstream.io) — WebRTC video transport, edge network
-- **Google Gemini** — Realtime multimodal LLM (sees video + speaks responses)
+- **OpenRouter (Google Gemini)** — Vision LLM for visual understanding
+- **ElevenLabs** — Fast, high-quality text-to-speech (optional, falls back to text-only)
 - **YOLO** (Ultralytics) — Person/pose detection, runs locally
 
 ## Key design decisions
 
-1. **Gemini Realtime is the primary LLM** — it handles video understanding AND voice output in a single pipeline. No separate STT/TTS needed. Use `gemini.Realtime(fps=3)`.
+1. **Gemini via OpenRouter is the primary VLM** — it handles video understanding. Voice output is handled separately by ElevenLabs TTS.
 
 2. **YOLO is for triggering, not understanding** — YOLO detects when a person enters the frame and provides pose data. Gemini does the actual visual understanding (outfit, colors, accessories).
 
@@ -185,13 +186,20 @@ The frontend and agent never communicate directly. Both join the same Stream vid
 
 ### Agent (`agent/.env`)
 
-| Variable               | Description                                               |
-| ---------------------- | --------------------------------------------------------- |
-| `STREAM_API_KEY`       | Stream Video API key                                      |
-| `STREAM_API_SECRET`    | Stream Video API secret                                   |
-| `OPENROUTER_API_KEY`   | OpenRouter key used by `agent_yolo.py`                    |
-| `GOOGLE_API_KEY`       | Google AI API key (used by other agent variants)          |
-| `AGENT_SERVICE_SECRET` | Shared secret required to call agent `serve` session APIs |
+| Variable                                     | Description                                                                        |
+| -------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `STREAM_API_KEY`                             | Stream Video API key                                                               |
+| `STREAM_API_SECRET`                          | Stream Video API secret                                                            |
+| `OPENROUTER_API_KEY`                         | OpenRouter key used by `agent_yolo.py`                                             |
+| `ELEVENLABS_API_KEY`                         | ElevenLabs API key for TTS (optional)                                              |
+| `GOOGLE_API_KEY`                             | Google AI API key (used by other agent variants)                                   |
+| `AGENT_SERVICE_SECRET`                       | Shared secret required to call agent `serve` session APIs                          |
+| `AGENT_IDLE_TIMEOUT_SECONDS`                 | Session idle timeout (default: `60`)                                               |
+| `AGENT_WAIT_FOR_PARTICIPANT_TIMEOUT_SECONDS` | Timeout to wait for a participant to join (default: `20`)                          |
+| `YOLO_LLM_VIDEO_SOURCE`                      | Force LLM to use `raw` or `processed` video track (default: `raw`)                 |
+| `YOLO_PROCESS_FPS`                           | YOLO frame processing FPS, clamped to `1-5` (default: `3`)                         |
+| `YOLO_OUTPUT_FPS`                            | Published annotated video FPS, clamped to `1-5` (default: `3`)                     |
+| `YOLO_LITE_ANNOTATIONS`                      | `true` disables hand/wrist-heavy overlays for faster demo output (default: `true`) |
 
 ## Rules
 
