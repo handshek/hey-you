@@ -30,7 +30,15 @@ export function GreeterYoloInner({
   onTrustedAgentEvent,
   onLocalCallingStateChange,
 }: GreeterYoloInnerProps) {
-  const { botState, hasAgent, latestCompliment } = useGreeterBotState({
+  const {
+    botState,
+    hasAgent,
+    agentAudioStream,
+    displayComplimentText,
+    currentComplimentId,
+    isComplimentVisible,
+    revealedWordCount,
+  } = useGreeterBotState({
     callId,
     compliments,
     addCompliment,
@@ -44,7 +52,11 @@ export function GreeterYoloInner({
     <GreeterLiveScreen
       botState={botState}
       hasAgent={hasAgent}
-      latestCompliment={latestCompliment}
+      agentAudioStream={agentAudioStream}
+      displayComplimentText={displayComplimentText}
+      currentComplimentId={currentComplimentId}
+      isComplimentVisible={isComplimentVisible}
+      revealedWordCount={revealedWordCount}
     />
   );
 }

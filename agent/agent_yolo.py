@@ -1,14 +1,19 @@
 import asyncio
 from datetime import datetime
 import logging
+import re
 from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import HTTPException, Request
 from vision_agents.core import Agent, AgentLauncher, Runner, ServeOptions, User
-from vision_agents.core.llm.events import LLMResponseCompletedEvent
+from vision_agents.core.agents.events import (
+    AgentSayCompletedEvent,
+    AgentSayErrorEvent,
+    AgentSayStartedEvent,
+)
 from vision_agents.core.utils.video_track import QueuedVideoTrack
-from vision_agents.plugins import getstream, openai, ultralytics
+from vision_agents.plugins import elevenlabs, getstream, openai, ultralytics
 import os
 
 # ── VLM raw-source override ──────────────────────────────────────────────────
@@ -170,6 +175,39 @@ def _bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
     return bounded
 
 
+def _deduplicate_response(text: str, max_sentences: int = 2) -> str:
+    """Remove repeated sentences from degenerated LLM output.
+
+    Vision models sometimes return the same sentence repeated 2-10x within a
+    single response.  This splits on sentence-ending punctuation, keeps only
+    unique sentences (case-insensitive), and caps at *max_sentences*.
+    """
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    seen: set[str] = set()
+    unique: list[str] = []
+    for s in sentences:
+        normalized = s.strip().lower()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            unique.append(s.strip())
+        if len(unique) >= max_sentences:
+            break
+    return " ".join(unique) if unique else text
+
+
+def _clean_markdown_artifacts(text: str) -> str:
+    """Strip common markdown formatting from LLM output."""
+    # Remove bullet prefixes: "- ", "* ", "• "
+    text = re.sub(r"^\s*[-*•]\s+", "", text, flags=re.MULTILINE)
+    # Remove bold/italic markers: **, *, __, _
+    text = re.sub(r"\*{1,2}|_{1,2}", "", text)
+    # Remove leading/trailing quotes
+    text = text.strip().strip('"').strip()
+    # Collapse multiple spaces
+    text = re.sub(r"  +", " ", text)
+    return text
+
+
 def _get_idle_timeout_seconds() -> float:
     raw = os.getenv("AGENT_IDLE_TIMEOUT_SECONDS", "60")
     try:
@@ -293,23 +331,54 @@ async def create_agent(**kwargs) -> Agent:
     )
 
     AgentClass = _RawSourceAgent if _LLM_VIDEO_SOURCE == "raw" else Agent
-    logger.info("LLM video source: %s (agent_class=%s)", _LLM_VIDEO_SOURCE, AgentClass.__name__)
+    logger.info(
+        "LLM video source: %s (agent_class=%s)",
+        _LLM_VIDEO_SOURCE,
+        AgentClass.__name__,
+    )
 
-    agent = AgentClass(
-        edge=getstream.Edge(),
-        agent_user=User(name="HeyYou", id="heyyou-agent"),
-        instructions=INSTRUCTIONS,
-        llm=openai.ChatCompletionsVLM(
+    tts = None
+    tts_mode = "text-only"
+    elevenlabs_api_key = os.getenv("ELEVENLABS_API_KEY")
+    if not elevenlabs_api_key:
+        logger.warning(
+            "ELEVENLABS_API_KEY is not set. Continuing in text-only mode."
+        )
+    else:
+        try:
+            tts = elevenlabs.TTS(model_id="eleven_flash_v2_5")
+            tts_mode = "elevenlabs"
+            logger.info("ElevenLabs TTS enabled (model_id=eleven_flash_v2_5)")
+        except Exception as e:
+            logger.warning(
+                "Failed to initialize ElevenLabs TTS. Continuing in text-only mode: %s",
+                e,
+            )
+
+    agent_kwargs: dict[str, Any] = {
+        "edge": getstream.Edge(),
+        "agent_user": User(name="HeyYou", id="heyyou-agent"),
+        "instructions": INSTRUCTIONS,
+        "llm": openai.ChatCompletionsVLM(
             model="google/gemini-2.0-flash-001",
             api_key=os.getenv("OPENROUTER_API_KEY"),
             base_url="https://openrouter.ai/api/v1",
             fps=1,
             frame_buffer_seconds=5,
         ),
-        # No TTS — text-only mode, compliments posted to frontend via HTTP
         # YOLO processor handles detection and publishes annotated video.
-        processors=[yolo_processor],
+        "processors": [yolo_processor],
+    }
+    if tts is not None:
+        agent_kwargs["tts"] = tts
+        # Keep TTS deterministic for now: streaming chunks can arrive/replay out
+        # of order in this flow. Synthesize from the completed response instead.
+        agent_kwargs["streaming_tts"] = False
+
+    agent = AgentClass(
+        **agent_kwargs,
     )
+    setattr(agent, "_heyyou_tts_mode", tts_mode)
     return agent
 
 
@@ -318,6 +387,10 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     session_id = agent.id
     participant_wait_timeout_seconds = _get_wait_for_participant_timeout_seconds()
     emitted_session_error = False
+    compliment_id = 0
+    is_speaking = False
+    turn_lock = asyncio.Lock()
+    recent_compliments: list[str] = []
 
     logger.info(
         "🤖 Session starting call_id=%s session_id=%s timeout_s=%.1f",
@@ -327,16 +400,120 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     )
 
     @agent.events.subscribe
-    async def on_llm_response(event: LLMResponseCompletedEvent):
-        """Emit the LLM response text to frontend listeners via Stream custom event."""
-        logger.info("📨 Compliment call_id=%s session_id=%s: %s", call_id, session_id, event.text)
-        await _emit_call_event(
-            agent,
-            call_id,
-            "compliment",
-            {"text": event.text},
-            session_id=session_id,
-        )
+    async def on_agent_say_started(event: AgentSayStartedEvent):
+        nonlocal is_speaking
+        is_speaking = True
+
+    @agent.events.subscribe
+    async def on_agent_say_completed(event: AgentSayCompletedEvent):
+        nonlocal is_speaking
+        is_speaking = False
+
+    @agent.events.subscribe
+    async def on_agent_say_error(event: AgentSayErrorEvent):
+        nonlocal is_speaking
+        is_speaking = False
+
+    async def run_compliment_turn(prompt: str) -> None:
+        nonlocal compliment_id
+        async with turn_lock:
+            # Clear accumulated conversation so the VLM works from system
+            # prompt + current frames only — prevents parroting old output.
+            if hasattr(agent.llm, "_conversation") and agent.llm._conversation is not None:
+                agent.llm._conversation.messages.clear()
+
+            # Inject recent compliments so the model avoids semantic repeats.
+            enriched_prompt = prompt + "\n\nIMPORTANT: Reply with exactly ONE sentence. No lists, no bullet points, no multiple compliments."
+            if recent_compliments:
+                history = "\n".join(f'- "{c}"' for c in recent_compliments)
+                enriched_prompt += (
+                    "\n\nYou already said these — say something COMPLETELY different:\n"
+                    + history
+                )
+
+            original_tts = getattr(agent, "tts", None)
+            # Keep TTS disabled until we are ready to speak. This prevents
+            # the SDK's internal LLMResponseCompletedEvent handler from
+            # auto-triggering TTS while we process/emit the text first.
+            setattr(agent, "tts", None)
+            try:
+                llm_response = await agent.llm.simple_response(enriched_prompt)
+            except Exception:
+                setattr(agent, "tts", original_tts)
+                raise
+
+            raw_text = str(getattr(llm_response, "text", "")).strip()
+            if not raw_text:
+                setattr(agent, "tts", original_tts)
+                raise RuntimeError("LLM returned an empty compliment")
+
+            # Deduplicate repeated sentences from VLM degeneration.
+            full_text = _deduplicate_response(raw_text)
+            full_text = _clean_markdown_artifacts(full_text)
+            # Hard cap: keep only the first sentence to avoid multi-compliment TTS.
+            parts = re.split(r"(?<=[.!?])\s+", full_text.strip(), maxsplit=1)
+            full_text = parts[0] if parts else full_text
+            if full_text != raw_text:
+                logger.info(
+                    "🧹 Deduped compliment: %r → %r", raw_text[:80], full_text
+                )
+
+            # Track for next turn's prompt injection.
+            recent_compliments.append(full_text)
+            if len(recent_compliments) > 3:
+                recent_compliments.pop(0)
+
+            compliment_id += 1
+            current_compliment_id = compliment_id
+            logger.info(
+                "📨 Compliment call_id=%s session_id=%s compliment_id=%s: %s",
+                call_id,
+                session_id,
+                current_compliment_id,
+                full_text,
+            )
+            await _emit_call_event(
+                agent,
+                call_id,
+                "compliment",
+                {
+                    "compliment_id": current_compliment_id,
+                    "text": full_text,
+                },
+                session_id=session_id,
+            )
+
+            # Wait for frontend to render text. During this sleep, any deferred
+            # LLMResponseCompletedEvent handlers run and see tts=None → no auto-TTS.
+            await asyncio.sleep(0.3)
+
+            # NOW restore TTS and speak — single speech path.
+            setattr(agent, "tts", original_tts)
+            if original_tts is not None:
+                logger.info(
+                    "🔊 Starting TTS compliment_id=%s call_id=%s",
+                    current_compliment_id,
+                    call_id,
+                )
+                try:
+                    await agent.say(full_text)
+                    logger.info(
+                        "✅ TTS completed compliment_id=%s call_id=%s",
+                        current_compliment_id,
+                        call_id,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "❌ TTS failed compliment_id=%s call_id=%s: %s",
+                        current_compliment_id,
+                        call_id,
+                        e,
+                    )
+            else:
+                logger.warning(
+                    "⚠️ No TTS engine (original_tts is None) compliment_id=%s",
+                    current_compliment_id,
+                )
 
     call = await agent.create_call(call_type, call_id)
     await _emit_call_event(
@@ -344,6 +521,14 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         call_id,
         "session_starting",
         {"message": "Agent session starting"},
+        session_id=session_id,
+    )
+    tts_mode = str(getattr(agent, "_heyyou_tts_mode", "unknown"))
+    await _emit_call_event(
+        agent,
+        call_id,
+        "info",
+        {"message": f"Speech mode: {tts_mode}"},
         session_id=session_id,
     )
     try:
@@ -406,8 +591,16 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
                 call_id,
                 session_id,
             )
+            await _emit_call_event(
+                agent,
+                call_id,
+                "participant_detected",
+                {"detected": True},
+                session_id=session_id,
+            )
+            await asyncio.sleep(1.5)
             try:
-                await agent.simple_response(COMPLIMENT_PROMPTS[0])
+                await run_compliment_turn(COMPLIMENT_PROMPTS[0])
             except Exception as e:
                 logger.warning(
                     "⚠️ Initial compliment failed call_id=%s session_id=%s: %s",
@@ -435,8 +628,30 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
                     session_id,
                 )
                 prompt = COMPLIMENT_PROMPTS[compliment_index % len(COMPLIMENT_PROMPTS)]
+                if is_speaking:
+                    logger.info(
+                        "⏭️ Skipping compliment tick call_id=%s session_id=%s; agent still speaking",
+                        call_id,
+                        session_id,
+                    )
+                    continue
+                if turn_lock.locked():
+                    logger.info(
+                        "⏭️ Skipping compliment tick call_id=%s session_id=%s; prior turn still active",
+                        call_id,
+                        session_id,
+                    )
+                    continue
+                await _emit_call_event(
+                    agent,
+                    call_id,
+                    "participant_detected",
+                    {"detected": True},
+                    session_id=session_id,
+                )
+                await asyncio.sleep(1.5)
                 try:
-                    await agent.simple_response(prompt)
+                    await run_compliment_turn(prompt)
                 except Exception as e:
                     logger.warning(
                         "⚠️ Compliment failed call_id=%s session_id=%s: %s",

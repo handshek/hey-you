@@ -33,12 +33,23 @@ export type AgentEventType =
   | "session_stopping"
   | "annotation_stream_ready";
 
+export interface AgentEventData extends Record<string, unknown> {
+  text?: string;
+  preview_text?: string;
+  compliment_id?: number;
+  tts_enabled?: boolean;
+  speech_delay_ms?: number;
+  preview_hide_ms_text_only?: number;
+  message?: string;
+  detected?: boolean;
+}
+
 export interface AgentCustomEventPayload {
   source?: string;
   event_type?: AgentEventType;
   call_id?: string;
   session_id?: string;
-  data?: Record<string, unknown>;
+  data?: AgentEventData;
   ts?: string;
 }
 

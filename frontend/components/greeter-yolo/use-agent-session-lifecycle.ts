@@ -46,6 +46,7 @@ export function useAgentSessionLifecycle({
   const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
   const stockVideoElementRef = useRef<HTMLVideoElement | null>(null);
   const stockVideoStreamRef = useRef<MediaStream | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
   const callRef = useRef<StreamVideoCall | null>(null);
   const clientRef = useRef<StreamVideoClient | null>(null);
 
@@ -820,6 +821,8 @@ export function useAgentSessionLifecycle({
     stockVideoElementRef.current = null;
     stockVideoStreamRef.current?.getTracks().forEach((track) => track.stop());
     stockVideoStreamRef.current = null;
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraStreamRef.current = null;
 
     await callRef.current?.leave().catch(() => undefined);
     await clientRef.current?.disconnectUser().catch(() => undefined);
@@ -896,15 +899,22 @@ export function useAgentSessionLifecycle({
         `Connected - waiting for agent (${AGENT_STARTUP_V2_ENABLED ? "startup-v2" : "legacy"})`,
       );
 
-      if (videoInput === "stock") {
-        await videoCall.camera.disable().catch(() => undefined);
-        await videoCall.microphone.disable().catch(() => undefined);
-        addLog("connection", "Demo mode: camera and mic disabled");
+      // Disable SDK-managed camera/mic — we publish video manually in both
+      // modes so the SFU forwards the track identically to the agent.
+      await videoCall.camera.disable().catch(() => undefined);
+      await videoCall.microphone.disable().catch(() => undefined);
 
+      if (videoInput === "stock") {
+        addLog("connection", "Demo mode: camera and mic disabled");
         await publishStockVideo(videoCall);
       } else {
-        await videoCall.camera.enable();
-        addLog("connection", "Camera enabled");
+        const cameraStream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 1280, height: 720 },
+          audio: false,
+        });
+        cameraStreamRef.current = cameraStream;
+        await videoCall.publishVideoStream(cameraStream);
+        addLog("connection", "Camera enabled (custom stream)");
       }
 
       transitionStartupLifecycle("starting", "initial-start");
@@ -939,12 +949,20 @@ export function useAgentSessionLifecycle({
   ]);
 
   useEffect(() => {
+    const handleBeforeUnload = () => {
+      stopAgentSessionSync();
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
     return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
       shutdownInProgressRef.current = true;
       stockVideoElementRef.current?.pause();
       stockVideoElementRef.current = null;
       stockVideoStreamRef.current?.getTracks().forEach((track) => track.stop());
       stockVideoStreamRef.current = null;
+      cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
       clearStartupTimers();
       stopAgentSessionSync();
       callRef.current?.leave().catch(() => undefined);
