@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+export const maxDuration = 60;
+
 interface AgentStartResponse {
   status: "started" | "already_running" | "error";
   session_id?: string;
