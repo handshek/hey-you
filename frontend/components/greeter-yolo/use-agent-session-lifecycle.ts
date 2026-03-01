@@ -22,11 +22,13 @@ import type {
   StartupLifecycle,
   StreamVideoCall,
 } from "@/components/greeter-yolo/types";
+import type { SpaceConfig } from "@/lib/space-config";
 
 interface UseAgentSessionLifecycleParams {
   spaceId: string;
   videoInput: "camera" | "stock";
   stockVideoUrl?: string;
+  spaceConfig?: SpaceConfig | null;
   addLog: AddLogFn;
 }
 
@@ -34,6 +36,7 @@ export function useAgentSessionLifecycle({
   spaceId,
   videoInput,
   stockVideoUrl,
+  spaceConfig,
   addLog,
 }: UseAgentSessionLifecycleParams) {
   const isDemoMode = videoInput === "stock";
@@ -891,6 +894,19 @@ export function useAgentSessionLifecycle({
       videoCall.setIncomingVideoEnabled(true);
       addLog("connection", `Joined call: ${runtimeCallId}`);
 
+      // Attach space config as call custom data so the agent can read it.
+      if (spaceConfig) {
+        await videoCall.update({
+          custom: {
+            space_name: spaceConfig.name,
+            business_type: spaceConfig.businessType,
+            tone: spaceConfig.tone,
+            context: spaceConfig.context || "",
+          },
+        });
+        addLog("connection", `Space config set: ${spaceConfig.tone} / ${spaceConfig.businessType}`);
+      }
+
       setCall(videoCall);
       callRef.current = videoCall;
       setStatus("connected");
@@ -942,6 +958,7 @@ export function useAgentSessionLifecycle({
     publishStockVideo,
     pushStartupTimeline,
     resetStartupLifecycle,
+    spaceConfig,
     spaceId,
     startAgentSession,
     transitionStartupLifecycle,

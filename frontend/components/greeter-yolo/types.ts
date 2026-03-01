@@ -1,10 +1,12 @@
 import type { StreamVideoClient } from "@stream-io/video-react-sdk";
+import type { SpaceConfig } from "@/lib/space-config";
 
 export interface GreeterYoloCallProps {
   spaceId: string;
   spaceName?: string;
   videoInput?: "camera" | "stock";
   stockVideoUrl?: string;
+  spaceConfig?: SpaceConfig | null;
 }
 
 export interface ComplimentEntry {

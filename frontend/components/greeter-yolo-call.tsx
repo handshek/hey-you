@@ -12,6 +12,7 @@ export function GreeterYoloCall({
   spaceId,
   videoInput = "camera",
   stockVideoUrl,
+  spaceConfig,
 }: GreeterYoloCallProps) {
   const { compliments, logs, addCompliment, addLog } = useGreeterEntries();
 
@@ -31,6 +32,7 @@ export function GreeterYoloCall({
     spaceId,
     videoInput,
     stockVideoUrl,
+    spaceConfig,
     addLog,
   });
 

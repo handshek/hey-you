@@ -11,5 +11,5 @@ export default function GreeterPage() {
   const config = useMemo(() => loadSpaceConfig(id), [id]);
   const name = config?.name ?? `Space ${id}`;
 
-  return <GreeterYoloCall spaceId={id} spaceName={name} videoInput="camera" />;
+  return <GreeterYoloCall spaceId={id} spaceName={name} videoInput="camera" spaceConfig={config} />;
 }
