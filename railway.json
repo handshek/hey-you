@@ -1,0 +1,12 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "buildCommand": "if [ -f agent/pyproject.toml ]; then cd agent; fi; uv sync --python 3.13 --frozen"
+  },
+  "deploy": {
+    "startCommand": "if [ -f agent/agent_yolo.py ]; then cd agent; fi; .venv/bin/python agent_yolo.py serve --host 0.0.0.0 --port $PORT",
+    "healthcheckPath": "/docs",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10
+  }
+}

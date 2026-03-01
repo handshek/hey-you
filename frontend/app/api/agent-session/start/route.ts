@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
 
     const endpoint = `${agentServiceUrl.replace(/\/+$/, "")}/sessions`;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 45_000);
+    const timeout = setTimeout(() => controller.abort(), 58_000);
     let agentRes: Response;
     try {
       agentRes = await fetch(endpoint, {
