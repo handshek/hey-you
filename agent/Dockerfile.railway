@@ -1,0 +1,25 @@
+FROM python:3.13-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    YOLO_CONFIG_DIR=/tmp/Ultralytics
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m pip install --upgrade pip
+
+# Install CPU-only PyTorch first to avoid CUDA wheel downloads and huge image bloat.
+RUN pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
+
+# Install runtime dependencies used by the agent service.
+RUN pip install "vision-agents[elevenlabs,getstream,openai,ultralytics]==0.3.7" python-dotenv
+
+COPY agent/ /app/
+
+CMD ["sh", "-c", "python agent_yolo.py serve --host 0.0.0.0 --port ${PORT:-8000}"]
