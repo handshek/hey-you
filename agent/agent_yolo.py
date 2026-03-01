@@ -5,7 +5,7 @@ import re
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from vision_agents.core import Agent, AgentLauncher, Runner, ServeOptions, User
 from vision_agents.core.agents.events import (
     AgentSayCompletedEvent,
@@ -67,10 +67,62 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-INSTRUCTIONS = """
-You are HeyYou — a charming, slightly funny AI greeter at the entrance of a
-physical space. You see people through a camera and make them smile.
+_TONE_DIRECTIVES: dict[str, str] = {
+    "warm": (
+        "Your tone is warm and welcoming — like a friend who's genuinely happy to see someone. "
+        "Cozy, sincere, makes people feel at home. Think gentle humor, soft exclamations."
+    ),
+    "hype": (
+        "Your tone is HIGH ENERGY — you're the hype person at the door. Exclamation marks are your "
+        "friend. You gas people up. Think \"OKAY!\" and \"Let's GO!\" and genuine excitement."
+    ),
+    "witty": (
+        "Your tone is dry and clever — think quick wit, not loud humor. Understated observations, "
+        "wry comparisons, the kind of compliment that makes someone smirk and then think about it."
+    ),
+    "professional": (
+        "Your tone is polished and refined — elegant warmth, not casual. Think boutique concierge, "
+        "not street-corner hype man. Sophisticated but never cold. No slang."
+    ),
+}
 
+_BUSINESS_TYPE_LABELS: dict[str, str] = {
+    "boutique_retail": "a boutique / retail store",
+    "cafe_restaurant": "a café / restaurant",
+    "conference_event": "a conference / event",
+    "gym_fitness": "a gym / fitness center",
+    "hotel_hospitality": "a hotel / hospitality venue",
+    "bookstore_library": "a bookstore / library",
+    "salon_spa": "a salon / spa",
+    "office_lobby": "an office lobby",
+}
+
+
+def build_instructions(
+    space_name: str | None = None,
+    business_type: str | None = None,
+    tone: str | None = None,
+    context: str | None = None,
+) -> str:
+    """Build the system instructions, customized per-space when config is available."""
+
+    # ── Dynamic preamble ──
+    preamble_parts: list[str] = []
+    preamble_parts.append(
+        "You are HeyYou — a charming AI greeter at the entrance of a physical space. "
+        "You see people through a camera and make them smile."
+    )
+    if space_name:
+        biz_label = _BUSINESS_TYPE_LABELS.get(business_type or "", "a physical space")
+        preamble_parts.append(f"You are greeting people at \"{space_name}\", which is {biz_label}.")
+    if context:
+        preamble_parts.append(f"Extra context from the business owner: {context}")
+
+    # ── Tone directive ──
+    tone_block = _TONE_DIRECTIVES.get(tone or "", _TONE_DIRECTIVES["warm"])
+
+    # ── Core rules (unchanged) ──
+    core = """\
 THE ONE RULE THAT MATTERS:
 Every single compliment MUST contain ONE specific visual anchor — something you
 can literally point to in the frame. A color, an item, a pattern, a combination.
@@ -117,21 +169,27 @@ When you include one, it should feel like an afterthought, not a pitch:
 ✓ "...honestly, aisle 3 was basically made for someone like you."
 ✗ "Come check out our new arrivals!" (too salesy)
 
-PERSONALITY:
-- You're slightly funny but never try-hard. Think dry wit, not dad jokes.
-- One-liners hit harder than long sentences. Keep it to 1-2 sentences MAX.
-- You can be a little cheeky — "Is it legal to walk in here looking that good?"
-  works. Just don't cross into creepy.
-- Sound like a person, not a brand. No corporate warmth.
-
 HARD RULES:
 - NEVER comment on body shape, weight, age, skin, or physical features.
 - NEVER be negative or backhanded.
 - NEVER repeat a compliment or structure you've already used.
 - ALWAYS reference something you can see in the current frame.
 - If you genuinely can't see anyone clearly: "Hey! I know you look amazing —
-  step a little closer and prove me right."
-"""
+  step a little closer and prove me right.\""""
+
+    personality = f"""\
+PERSONALITY:
+{tone_block}
+- One-liners hit harder than long sentences. Keep it to 1-2 sentences MAX.
+- You can be a little cheeky — "Is it legal to walk in here looking that good?"
+  works. Just don't cross into creepy.
+- Sound like a person, not a brand. No corporate warmth."""
+
+    return "\n\n".join(preamble_parts) + "\n\n" + core + "\n\n" + personality
+
+
+# Default instructions used when no space config is provided (demo mode, etc.)
+DEFAULT_INSTRUCTIONS = build_instructions()
 
 COMPLIMENT_PROMPTS = [
     "Someone just appeared. Look at the latest frame — find ONE specific thing (a color, an item, a combo) and build a warm, punchy compliment around it. No vague vibes.",
@@ -358,7 +416,7 @@ async def create_agent(**kwargs) -> Agent:
     agent_kwargs: dict[str, Any] = {
         "edge": getstream.Edge(),
         "agent_user": User(name="HeyYou", id="heyyou-agent"),
-        "instructions": INSTRUCTIONS,
+        "instructions": DEFAULT_INSTRUCTIONS,
         "llm": openai.ChatCompletionsVLM(
             model="google/gemini-2.0-flash-001",
             api_key=os.getenv("OPENROUTER_API_KEY"),
@@ -516,6 +574,31 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
                 )
 
     call = await agent.create_call(call_type, call_id)
+
+    # Read space config from call custom data (set by frontend before agent start).
+    custom = getattr(call, "custom_data", None) or {}
+    space_name = custom.get("space_name")
+    business_type = custom.get("business_type")
+    tone = custom.get("tone")
+    space_context = custom.get("context")
+
+    if space_name or tone or business_type:
+        agent.instructions = build_instructions(
+            space_name=space_name,
+            business_type=business_type,
+            tone=tone,
+            context=space_context,
+        )
+        logger.info(
+            "📋 Space config: name=%s type=%s tone=%s context=%s",
+            space_name,
+            business_type,
+            tone,
+            (space_context or "")[:50],
+        )
+    else:
+        logger.info("📋 No space config found, using default instructions")
+
     await _emit_call_event(
         agent,
         call_id,
@@ -697,6 +780,12 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
 
 if __name__ == "__main__":
+    health_app = FastAPI()
+
+    @health_app.get("/health")
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
+
     launcher = AgentLauncher(
         create_agent=create_agent,
         join_call=join_call,
@@ -704,6 +793,7 @@ if __name__ == "__main__":
         max_sessions_per_call=1,
     )
     serve_options = ServeOptions(
+        fast_api=health_app,
         can_start_session=_can_start_session,
         can_close_session=_can_close_session,
         can_view_session=_can_view_session,
