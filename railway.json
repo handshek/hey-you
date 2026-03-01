@@ -1,7 +1,7 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
-    "buildCommand": "curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH=\"$HOME/.local/bin:$PATH\" && if [ -f agent/pyproject.toml ]; then cd agent; fi; \"$HOME/.local/bin/uv\" sync --python 3.13 --frozen"
+    "buildCommand": "if [ -f agent/pyproject.toml ]; then cd agent; fi; python -m venv .venv && . .venv/bin/activate && pip install --upgrade pip && pip install --index-url https://download.pytorch.org/whl/cpu torch==2.10.0+cpu torchvision==0.25.0+cpu && pip install \"vision-agents[elevenlabs,getstream,openai,ultralytics]==0.3.7\" python-dotenv"
   },
   "deploy": {
     "startCommand": "if [ -f agent/agent_yolo.py ]; then cd agent; fi; .venv/bin/python agent_yolo.py serve --host 0.0.0.0 --port $PORT",
