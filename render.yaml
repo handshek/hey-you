@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: heyyou-agent
+    runtime: python
+    plan: free
+    rootDir: agent
+    buildCommand: 'curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH" && uv sync --frozen'
+    startCommand: 'export PATH="$HOME/.local/bin:$PATH" && uv run agent_yolo.py serve --host 0.0.0.0 --port $PORT'
+    autoDeployTrigger: commit
+    envVars:
+      - key: STREAM_API_KEY
+        sync: false
+      - key: STREAM_API_SECRET
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: AGENT_SERVICE_SECRET
+        sync: false
+      - key: AGENT_IDLE_TIMEOUT_SECONDS
+        value: "60"
+      - key: AGENT_WAIT_FOR_PARTICIPANT_TIMEOUT_SECONDS
+        value: "20"
+      - key: YOLO_PROCESS_FPS
+        value: "3"
+      - key: YOLO_OUTPUT_FPS
+        value: "3"
+      - key: YOLO_LITE_ANNOTATIONS
+        value: "true"
+      - key: YOLO_LLM_VIDEO_SOURCE
+        value: "raw"
