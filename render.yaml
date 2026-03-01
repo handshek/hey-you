@@ -5,7 +5,7 @@ services:
     plan: free
     rootDir: agent
     buildCommand: 'curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH" && uv sync --frozen'
-    startCommand: 'export PATH="$HOME/.local/bin:$PATH" && uv run agent_yolo.py serve --host 0.0.0.0 --port $PORT'
+    startCommand: '.venv/bin/python agent_yolo.py serve --host 0.0.0.0 --port $PORT'
     autoDeployTrigger: commit
     envVars:
       - key: STREAM_API_KEY
@@ -32,3 +32,5 @@ services:
         value: "true"
       - key: YOLO_LLM_VIDEO_SOURCE
         value: "raw"
+      - key: YOLO_CONFIG_DIR
+        value: "/tmp/Ultralytics"
