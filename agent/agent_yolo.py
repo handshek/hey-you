@@ -5,13 +5,14 @@ import re
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import HTTPException, Request
 from vision_agents.core import Agent, AgentLauncher, Runner, ServeOptions, User
 from vision_agents.core.agents.events import (
     AgentSayCompletedEvent,
     AgentSayErrorEvent,
     AgentSayStartedEvent,
 )
+from vision_agents.core.instructions import Instructions
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 from vision_agents.plugins import elevenlabs, getstream, openai, ultralytics
 import os
@@ -583,12 +584,12 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     space_context = custom.get("context")
 
     if space_name or tone or business_type:
-        agent.instructions = build_instructions(
+        agent.instructions = Instructions(input_text=build_instructions(
             space_name=space_name,
             business_type=business_type,
             tone=tone,
             context=space_context,
-        )
+        ))
         logger.info(
             "📋 Space config: name=%s type=%s tone=%s context=%s",
             space_name,
@@ -780,12 +781,6 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
 
 if __name__ == "__main__":
-    health_app = FastAPI()
-
-    @health_app.get("/health")
-    async def health() -> dict[str, str]:
-        return {"status": "ok"}
-
     launcher = AgentLauncher(
         create_agent=create_agent,
         join_call=join_call,
@@ -793,7 +788,6 @@ if __name__ == "__main__":
         max_sessions_per_call=1,
     )
     serve_options = ServeOptions(
-        fast_api=health_app,
         can_start_session=_can_start_session,
         can_close_session=_can_close_session,
         can_view_session=_can_view_session,
