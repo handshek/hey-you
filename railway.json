@@ -5,7 +5,7 @@
     "dockerfilePath": "agent/Dockerfile.railway"
   },
   "deploy": {
-    "startCommand": "python agent_yolo.py serve --host 0.0.0.0 --port $PORT --http-log-level info --agents-log-level info",
+    "startCommand": null,
     "healthcheckPath": "/health",
     "healthcheckTimeout": 600,
     "restartPolicyType": "ON_FAILURE",
