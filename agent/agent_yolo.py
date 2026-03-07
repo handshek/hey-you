@@ -71,19 +71,31 @@ load_dotenv()
 _TONE_DIRECTIVES: dict[str, str] = {
     "warm": (
         "Your tone is warm and welcoming — like a friend who's genuinely happy to see someone. "
-        "Cozy, sincere, makes people feel at home. Think gentle humor, soft exclamations."
+        "Cozy, sincere, makes people feel at home. Think gentle humor, soft exclamations.\n"
+        "Examples of YOUR voice:\n"
+        '✓ "That mustard scarf? Honestly, it just made my whole day a little warmer."\n'
+        '✓ "I love that you walked in here rocking those colors — you belong here."'
     ),
     "hype": (
         "Your tone is HIGH ENERGY — you're the hype person at the door. Exclamation marks are your "
-        "friend. You gas people up. Think \"OKAY!\" and \"Let's GO!\" and genuine excitement."
+        "friend. You gas people up. Think \"OKAY!\" and \"Let's GO!\" and genuine excitement.\n"
+        "Examples of YOUR voice:\n"
+        '✓ "OKAY WAIT — those sneakers just walked in and I am NOT ready! Let\'s GO!"\n'
+        '✓ "Hold UP — that jacket?! You came to WIN today and honestly? Mission accomplished!"'
     ),
     "witty": (
         "Your tone is dry and clever — think quick wit, not loud humor. Understated observations, "
-        "wry comparisons, the kind of compliment that makes someone smirk and then think about it."
+        "wry comparisons, the kind of compliment that makes someone smirk and then think about it.\n"
+        "Examples of YOUR voice:\n"
+        '✓ "That denim-on-denim situation shouldn\'t work, and yet here you are, proving physics wrong."\n'
+        '✓ "I\'d say that bag is doing the heavy lifting, but honestly the whole look is pulling its weight."'
     ),
     "professional": (
         "Your tone is polished and refined — elegant warmth, not casual. Think boutique concierge, "
-        "not street-corner hype man. Sophisticated but never cold. No slang."
+        "not street-corner hype man. Sophisticated but never cold. No slang.\n"
+        "Examples of YOUR voice:\n"
+        '✓ "That emerald accent is a wonderful choice — it catches the light beautifully."\n'
+        '✓ "You have an eye for color pairing. The navy and camel work remarkably well together."'
     ),
 }
 
@@ -116,6 +128,11 @@ def build_instructions(
     if space_name:
         biz_label = _BUSINESS_TYPE_LABELS.get(business_type or "", "a physical space")
         preamble_parts.append(f"You are greeting people at \"{space_name}\", which is {biz_label}.")
+        if len(space_name) > 20:
+            preamble_parts.append(
+                'The business name is long — when referring to it in speech, '
+                'use "here", "this place", or "we" instead of the full name.'
+            )
     if context:
         preamble_parts.append(f"Extra context from the business owner: {context}")
 
@@ -141,17 +158,12 @@ PERSON. If you catch yourself about to say "nice chair" or "cool painting" — s
 That's not your job.
 
 But here's the trick — the visual anchor is the SEASONING, not the meal. Wrap it
-in warmth, humor, or personality. The formula is:
+in your personality. The formula is:
 
-  [warm/playful opener] + [specific thing you see] + [why it's great OR a light joke]
+  [opener in YOUR tone] + [specific thing you see] + [why it's great OR a light joke]
 
-HOW TO SOUND:
-✓ "Okay, whoever told you that mustard yellow was your color — give them a raise. That is WORKING."
-✓ "Those sneakers walked in with more confidence than I'll ever have. Respect."
-✓ "Hold on — is that a denim-on-denim situation? And you're pulling it off? Legend."
-✓ "That bag is doing some serious heavy lifting for this outfit. And by heavy lifting, I mean making it perfect."
-✓ "I don't know what's brighter — that red jacket or the energy you just brought in here."
-✓ "You and that scarf look like you've been through a LOT together. In the best way."
+Match the voice and energy from the examples in YOUR PERSONALITY section above.
+Every compliment should sound like it came from THAT character, not a generic AI.
 
 DO NOT SOUND LIKE THIS:
 ✗ "You have such a lovely vibe about you!" (too vague — could be said to anyone)
@@ -175,11 +187,15 @@ one person and ignore the others. Approaches that work:
 Pick out something the group shares (similar colors, coordinated energy, contrasting
 styles that work together) rather than singling someone out.
 
-BUSINESS MENTIONS (roughly 1 in 3 compliments):
-When you include one, it should feel like an afterthought, not a pitch:
-✓ "...we just got something in the back that has your name on it."
-✓ "...honestly, aisle 3 was basically made for someone like you."
+BUSINESS MENTIONS:
+Do NOT mention the business, store, or brand unless your prompt EXPLICITLY tells
+you to. When you ARE told to include one, keep it to a short natural aside — never
+a pitch. Use "here", "we", "this place" instead of the full business name if it's
+long. Examples of good plugs:
+✓ "...we've got something in the back with your name on it."
+✓ "...you're gonna love what's inside, trust me."
 ✗ "Come check out our new arrivals!" (too salesy)
+✗ "Welcome to Rambo Workouts Premium Fitness Center!" (don't force the full name)
 
 HARD RULES:
 - NEVER comment on body shape, weight, age, skin, or physical features.
@@ -194,24 +210,38 @@ HARD RULES:
     personality = f"""\
 PERSONALITY:
 {tone_block}
-- One-liners hit harder than long sentences. Keep it to 1-2 sentences MAX.
+- Keep it to ONE sentence, 15-20 words MAX. Punchier is always better.
 - You can be a little cheeky — "Is it legal to walk in here looking that good?"
   works. Just don't cross into creepy.
 - Sound like a person, not a brand. No corporate warmth."""
 
-    return "\n\n".join(preamble_parts) + "\n\n" + core + "\n\n" + personality
+    return "\n\n".join(preamble_parts) + "\n\n" + personality + "\n\n" + core
 
 
 # Default instructions used when no space config is provided (demo mode, etc.)
 DEFAULT_INSTRUCTIONS = build_instructions()
 
-COMPLIMENT_PROMPTS = [
-    "Someone just appeared. Look at the latest frame — find ONE specific thing (a color, an item, a combo) and build a warm, punchy compliment around it. No vague vibes.",
-    "New compliment, different angle. What's the FIRST specific thing that catches your eye in this frame? A color? Shoes? A hat? A pattern? Lead with that. Keep it fun.",
+_BASE_COMPLIMENT_PROMPTS = [
+    "Someone just appeared. Look at the latest frame — find ONE specific thing (a color, an item, a combo) and build a punchy compliment around it. No vague vibes.",
+    "New compliment, different angle. What's the FIRST specific thing that catches your eye in this frame? A color? Shoes? A hat? A pattern? Lead with that.",
     "Try something slightly funny this time. Find a specific detail and riff on it — a playful observation, a light joke, a 'hold on, wait' moment. One to two sentences max.",
-    "If there are multiple people, address the group. If it's one person, pick a detail you haven't mentioned before. Optionally end with a casual store nudge.",
     "Make this one land. Find the single most interesting visual detail in the frame and make that person feel like they made the best decision of their day wearing it.",
 ]
+
+_NUDGE_SUFFIX = (
+    "\n\nIMPORTANT: This compliment MUST include a natural store/brand mention — "
+    "weave in something about the business, like 'we've got something in the back "
+    "that matches that energy' or 'aisle 3 was basically made for you.' Make it feel "
+    "like an afterthought, not a sales pitch. But it MUST be there."
+)
+
+
+def _get_compliment_prompt(index: int, space_name: str | None) -> str:
+    """Return a compliment prompt, adding a store-nudge suffix every 4th turn."""
+    base = _BASE_COMPLIMENT_PROMPTS[index % len(_BASE_COMPLIMENT_PROMPTS)]
+    if space_name and (index % 4 == 3):
+        return base + _NUDGE_SUFFIX
+    return base
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -495,7 +525,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
                 agent.llm._conversation.messages.clear()
 
             # Inject recent compliments so the model avoids semantic repeats.
-            enriched_prompt = prompt + "\n\nIMPORTANT: Reply with exactly ONE sentence. No lists, no bullet points, no multiple compliments."
+            enriched_prompt = prompt + "\n\nIMPORTANT: Reply with exactly ONE sentence, 15-20 words max. No lists, no bullet points, no multiple compliments."
             if recent_compliments:
                 history = "\n".join(f'- "{c}"' for c in recent_compliments)
                 enriched_prompt += (
@@ -529,6 +559,12 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
                 logger.info(
                     "🧹 Deduped compliment: %r → %r", raw_text[:80], full_text
                 )
+
+            # Hard cap: 25 words max (safety net for verbose LLM output).
+            words = full_text.split()
+            if len(words) > 25:
+                full_text = " ".join(words[:25]).rstrip(",;:—-") + "."
+                logger.info("✂️ Trimmed compliment to 25 words")
 
             # Track for next turn's prompt injection.
             recent_compliments.append(full_text)
@@ -597,12 +633,14 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     space_context = custom.get("context")
 
     if space_name or tone or business_type:
-        agent.instructions = Instructions(input_text=build_instructions(
+        new_instructions = Instructions(input_text=build_instructions(
             space_name=space_name,
             business_type=business_type,
             tone=tone,
             context=space_context,
         ))
+        agent.instructions = new_instructions
+        agent.llm.set_instructions(new_instructions)
         logger.info(
             "📋 Space config: name=%s type=%s tone=%s context=%s",
             space_name,
@@ -697,7 +735,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
             )
             await asyncio.sleep(1.5)
             try:
-                await run_compliment_turn(COMPLIMENT_PROMPTS[0])
+                await run_compliment_turn(_get_compliment_prompt(0, space_name))
             except Exception as e:
                 logger.warning(
                     "⚠️ Initial compliment failed call_id=%s session_id=%s: %s",
@@ -724,7 +762,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
                     call_id,
                     session_id,
                 )
-                prompt = COMPLIMENT_PROMPTS[compliment_index % len(COMPLIMENT_PROMPTS)]
+                prompt = _get_compliment_prompt(compliment_index, space_name)
                 if is_speaking:
                     logger.info(
                         "⏭️ Skipping compliment tick call_id=%s session_id=%s; agent still speaking",
