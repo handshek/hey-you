@@ -18,7 +18,12 @@ RUN python -m pip install --upgrade pip
 RUN pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
 
 RUN pip install "getstream[telemetry,webrtc]==2.7.1" \
-    "vision-agents[elevenlabs,getstream,openai,ultralytics]==0.3.7" \
+    "vision-agents==0.3.7" \
+    "vision-agents-plugins-elevenlabs==0.3.7" \
+    "vision-agents-plugins-getstream==0.3.7" \
+    "vision-agents-plugins-openai==0.3.8" \
+    "vision-agents-plugins-openrouter==0.3.8" \
+    "vision-agents-plugins-ultralytics==0.3.8" \
     python-dotenv
 
 COPY agent/ /app/
