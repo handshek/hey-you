@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime
+import gc
 import logging
 import re
 from typing import Any
@@ -416,7 +417,7 @@ async def create_agent(**kwargs) -> Agent:
         model_path="yolo11n-pose.pt",
         conf_threshold=0.5,
         fps=yolo_process_fps,
-        max_workers=4,
+        max_workers=2,
         enable_hand_tracking=not lite_annotations,
         enable_wrist_highlights=not lite_annotations,
     )
@@ -466,7 +467,7 @@ async def create_agent(**kwargs) -> Agent:
             api_key=os.getenv("OPENROUTER_API_KEY"),
             base_url="https://openrouter.ai/api/v1",
             fps=1,
-            frame_buffer_seconds=5,
+            frame_buffer_seconds=3,
         ),
         # YOLO processor handles detection and publishes annotated video.
         "processors": [yolo_processor],
@@ -829,6 +830,8 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
             {"message": "Agent session stopping"},
             session_id=session_id,
         )
+        # Free memory eagerly — prevents OOM on rapid session cycling.
+        gc.collect()
 
 
 if __name__ == "__main__":
