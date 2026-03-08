@@ -17,9 +17,9 @@ RUN python -m pip install --upgrade pip
 # Install CPU-only PyTorch first to avoid CUDA wheel downloads and huge image bloat.
 RUN pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
 
-# Install runtime dependencies used by the agent service.
 RUN pip install "getstream[telemetry,webrtc]==2.7.1" \
-    && pip install "vision-agents[elevenlabs,getstream,openai,ultralytics]==0.3.7" python-dotenv
+    "vision-agents[elevenlabs,getstream,openai,ultralytics]==0.3.7" \
+    python-dotenv
 
 COPY agent/ /app/
 
