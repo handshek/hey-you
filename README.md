@@ -12,8 +12,8 @@ HeyYou is an AI greeter for physical spaces — retail stores, conferences, hote
 ┌─────────────────────┐         ┌──────────────────────────┐         ┌─────────────────────┐
 │                     │         │                          │         │                     │
 │   Next.js Frontend  │◄───────►│  Stream Edge Network     │◄───────►│  Python Vision      │
-│   (Dashboard +      │  WebRTC │  (Video + Audio relay)   │  WebRTC │  Agent (Gemini      │
-│    Greeter View)    │         │                          │         │   Realtime API)     │
+│   (Dashboard +      │  WebRTC │  (Video + Audio relay)   │  WebRTC │  Agent (Claude      │
+│    Greeter View)    │         │                          │         │   Haiku/OpenRouter) │
 │                     │         │                          │         │                     │
 └────────┬────────────┘         └──────────────────────────┘         └─────────────────────┘
          │
@@ -30,7 +30,7 @@ HeyYou is an AI greeter for physical spaces — retail stores, conferences, hote
 **How it works:**
 1. The **Next.js frontend** serves the dashboard (where business owners configure their spaces) and the **greeter view** (what displays on the iPad at the entrance).
 2. The greeter view opens a **Stream Video** call, streaming the entrance camera feed.
-3. The **Python Vision Agent** joins the same Stream call, watches the video feed using **Gemini's Realtime API**, and speaks personalized greetings.
+3. The **Python Vision Agent** joins the same Stream call, watches the video feed using **Claude Haiku** (via OpenRouter), and speaks personalized greetings through ElevenLabs TTS.
 4. The frontend server starts agent sessions on-demand via the agent service API (`/sessions`).
 
 ---
@@ -42,7 +42,7 @@ HeyYou is an AI greeter for physical spaces — retail stores, conferences, hote
 - **Node.js** 18+ and [**Bun**](https://bun.sh/)
 - **Python** 3.11+ and [**uv**](https://docs.astral.sh/uv/) *(for agent only)*
 - A [Stream](https://getstream.io/) account (Video API key + secret)
-- A [Google AI](https://ai.google.dev/) API key (for Gemini)
+- An [OpenRouter](https://openrouter.ai/) API key (for Claude Haiku)
 
 ### 1. Clone & Install
 
@@ -121,7 +121,7 @@ uv run agent_yolo.py serve --host 127.0.0.1 --port 8000
 ## Tech Stack
 
 - **Frontend:** Next.js 15, TypeScript, Tailwind CSS v4, shadcn/ui, Framer Motion
-- **Backend Agent:** Python, Vision Agents SDK, Gemini Realtime API
+- **Backend Agent:** Python, Vision Agents SDK, Claude Haiku (via OpenRouter), ElevenLabs TTS
 - **Video:** Stream Video (WebRTC)
 - **Session Orchestration:** Vision Agents `serve` API + frontend server route
 - **Data Fetching:** TanStack React Query

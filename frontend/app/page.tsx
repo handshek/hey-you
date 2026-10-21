@@ -114,7 +114,7 @@ export default function HomePage() {
             <span className="w-1.5 h-1.5 rounded-full bg-amber" />
             <span className="font-display italic text-sm text-amber">HeyYou</span>
           </div>
-          <span>Built with Stream Vision Agents · Gemini · YOLO</span>
+          <span>Built with Stream Vision Agents · Claude · YOLO</span>
         </div>
       </footer>
     </main>
