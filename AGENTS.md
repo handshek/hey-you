@@ -28,7 +28,7 @@ agent/ (Python 3.11+, vision-agents SDK)
     │
     │  Joins the SAME Stream call as an AI participant
     │  Receives video frames, runs YOLO for person detection,
-    │  sends frames to Gemini Realtime for visual understanding + voice output
+    │  sends frames to Claude Haiku (via OpenRouter) for visual understanding
     │
     └── Speaks compliment back through the call (audio track)
 ```
@@ -140,21 +140,21 @@ The frontend and agent never communicate directly. Both join the same Stream vid
 
 - Python 3.11+
 - vision-agents SDK by Stream (v0.3+)
-- Plugins: `getstream` (edge network), `gemini` (Realtime LLM with native video), `ultralytics` (YOLO pose detection)
+- Plugins: `getstream` (edge network), `openai` (Chat Completions VLM, pointed at OpenRouter), `elevenlabs` (TTS), `ultralytics` (YOLO pose detection)
 - `uv` package manager
 
 ### External services
 
 - **Stream** (getstream.io) — WebRTC video transport, edge network
-- **OpenRouter (Google Gemini)** — Vision LLM for visual understanding
+- **OpenRouter (Claude Haiku 5.5)** — Vision LLM for visual understanding
 - **ElevenLabs** — Fast, high-quality text-to-speech (optional, falls back to text-only)
 - **YOLO** (Ultralytics) — Person/pose detection, runs locally
 
 ## Key design decisions
 
-1. **Gemini via OpenRouter is the primary VLM** — it handles video understanding. Voice output is handled separately by ElevenLabs TTS.
+1. **Claude Haiku via OpenRouter is the primary VLM** — it handles video understanding. Voice output is handled separately by ElevenLabs TTS.
 
-2. **YOLO is for triggering, not understanding** — YOLO detects when a person enters the frame and provides pose data. Gemini does the actual visual understanding (outfit, colors, accessories).
+2. **YOLO is for triggering, not understanding** — YOLO detects when a person enters the frame and provides pose data. Claude Haiku does the actual visual understanding (outfit, colors, accessories).
 
 3. **The greeter page is fullscreen** — No sidebar, no nav, no chrome. Just the bot face, text, and waveform. This is what gets displayed on the iPad at the entrance.
 

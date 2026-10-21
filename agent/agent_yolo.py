@@ -463,7 +463,7 @@ async def create_agent(**kwargs) -> Agent:
         "agent_user": User(name="HeyYou", id="heyyou-agent"),
         "instructions": DEFAULT_INSTRUCTIONS,
         "llm": openai.ChatCompletionsVLM(
-            model="google/gemini-2.0-flash-001",
+            model="anthropic/claude-haiku-5.5",
             api_key=os.getenv("OPENROUTER_API_KEY"),
             base_url="https://openrouter.ai/api/v1",
             fps=1,
